@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="iso-8859-1" ?>
+<menu>
+  <item>
+     <path>civicrm/oddc/paypal-callback</path>
+     <page_callback>CRM_Oddc_PayPalCallback::handleRequest</page_callback>
+     <access_arguments>*always allow*</access_arguments>
+  </item>
+</menu>
