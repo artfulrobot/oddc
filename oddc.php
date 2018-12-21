@@ -230,3 +230,48 @@ function oddc__get_redirect_url($input) {
 function oddc__complete_redirect_url($input) {
   return CRM_Oddc::factory()->completeRedirectFlow($input);
 }
+/**
+ * Augment the app config array with details loaded from a contact's record, if
+ * the checksum is valid.
+ */
+function oddc__add_contact_data_from_checksum(&$odd_app_config, $cid, $cs) {
+  $cid = (int) $cid;
+  if (!$cid>0) {
+    // Suspicious.
+    return;
+  }
+  if (!CRM_Contact_BAO_Contact_Utils::validChecksum($cid, $cs)) {
+    // Invalid checksum.
+    return;
+  }
+  // Checksum is, load contact details.
+  $fields = ["email", "first_name", 'last_name', "street_address", "city", "postal_code", "country_id"];
+  $contact = civicrm_api3('Contact', 'getsingle', ['id' => $cid, 'return' =>  $fields]);
+
+  // We need an ISO 3166-1 alpha-2 version of the country, not the CiviCRM country ID.
+  if (!empty($contact['country_id'])) {
+    $contact['country'] = CRM_Core_PseudoConstant::countryIsoCode($contact['country_id']);
+  }
+
+  // remove country_id, add country.
+  array_pop($fields);
+  $fields[] = 'country';
+
+  // Copy any data we have into the app config.
+  foreach ($fields as $_) {
+    if (!empty($contact[$_])) {
+      $odd_app_config[$_] = $contact[$_];
+    }
+  }
+}
+/**
+ * Return a map of countries.
+ */
+function oddc__get_country_list() {
+  $result = civicrm_api3('Country', 'get', ['return' => ["iso_code", "name"], 'options' => ['limit' => 0, 'sort' => 'name']]);
+  $list = [];
+  foreach ($result['values'] as $_) {
+    $list[$_['iso_code']] = $_['name'];
+  }
+  return $list;
+}
