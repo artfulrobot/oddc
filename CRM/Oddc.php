@@ -192,6 +192,7 @@ class CRM_Oddc {
       $contrib_params['contribution_recur_id'] = $contrib_recur['id'];
     }
     $this->setGiftAidParam($contrib_params);
+    $this->setOdProjectParam($contrib_params);
 
     $contribution = civicrm_api3('Contribution', 'create', $contrib_params);
 
@@ -368,7 +369,7 @@ class CRM_Oddc {
     ));
 
     // Create a pending Contribution record.
-    $contrib_recur = civicrm_api3('Contribution', 'create', array(
+    $contrib_params = [
       'amount'                 => $params['amount'],
       'contact_id'             => $this->contact_id,
       'contribution_recur_id'  => $contrib_recur['id'],
@@ -382,7 +383,10 @@ class CRM_Oddc {
       'payment_processor_id'   => $params['payment_processor_id'],
       'receive_date'           => $subscription->start_date,
       'total_amount'           => $params['amount'],
-    ));
+    ];
+    $this->setOdProjectParam($contrib_params);
+    $this->setGiftAidParam($contrib_params);
+    $contrib_recur = civicrm_api3('Contribution', 'create', $contrib_params);
   }
   /**
    * Find or create CiviCRM contact.
@@ -468,5 +472,17 @@ class CRM_Oddc {
     require_once 'CRM/Core/BAO/CustomField.php';
     $id = CRM_Core_BAO_CustomField::getCustomFieldID('Eligible_for_Gift_Aid', 'Gift_Aid');
     $params["custom_$id"] = $this->input['giftaid'];
+  }
+  /**
+   * Lookup the custom field ID for project and set it as
+   * a parameter for the Contribution.create call.
+   *
+   * @param &Array params for the Contribution.create API call.
+   */
+  protected function setOdProjectParam(&$params) {
+    // Look up the custom_N name for the field.
+    require_once 'CRM/Core/BAO/CustomField.php';
+    $id = CRM_Core_BAO_CustomField::getCustomFieldID('od_project', 'od_project_group');
+    $params["custom_$id"] = $this->input['project'];
   }
 }

@@ -29,20 +29,83 @@ function oddc_civicrm_xmlMenu(&$files) {
 function oddc_civicrm_install() {
   _oddc_civix_civicrm_install();
 
+  /**
+   * Helper function for creating data structures.
+   *
+   * @param string $entity - name of the API entity.
+   * @param Array $params_min parameters to use for search.
+   * @param Array $params_extra these plus $params_min are used if a create call
+   *              is needed.
+   */
+  $api_get_or_create = function ($entity, $params_min, $params_extra) {
+    $params_min += ['sequential' => 1];
+    $result = civicrm_api3($entity, 'get', $params_min);
+    if (!$result['count']) {
+      // Couldn't find it, create it now.
+      $result = civicrm_api3($entity, 'create', $params_extra + $params_min);
+    }
+    return $result['values'][0];
+  };
+
   // Ensure we have the marketing_consent activity type.
-  $consent_activity = civicrm_api3('OptionValue', 'get', [
-    'sequential' => 1,
-    'option_group_id' => "activity_type",
-    'name' => "marketing_consent",
-  ]);
-  if ($consent_activity['count'] == 0) {
-    $consent_activity = civicrm_api3('OptionValue', 'create', [
-      'option_group_id' => "activity_type",
-      'name'            => "marketing_consent",
+  $consent_activity = $api_get_or_create('OptionValue',
+    [ 'option_group_id' => "activity_type", 'name' => "marketing_consent" ],
+    [
       'label'           => "Consent",
       'description'     => "Records a log of this contact having given marketing consent to help comply with the GDPR.",
     ]);
+
+
+  // Ensure we have the custom field group we need for project.
+  $contribution_custom_group = $api_get_or_create('CustomGroup', [
+    'name' => "od_project_group",
+    'extends' => "Contribution",
+  ],
+  ['title' => 'oD Project']);
+
+  // Add our 'Project' field.
+  // ...This is a drop-down select field, first we need to check the option
+  //    group exists, and its values.
+  $opts_group = $api_get_or_create('OptionGroup',
+    ['name' => 'od_project_opts'],
+    ['title' => 'oD Project', 'is_active' => 1]);
+  $weight = 0;
+  foreach ([
+    "50.50"                          => "50.50",
+    "Beyond Trafficking and Slavery" => "Beyond Trafficking and Slavery",
+    "Can Europe Make It?"            => "Can Europe Make It?",
+    "Dark Money Investigations"      => "Dark Money Investigations",
+    "democraciaAbierta"              => "democraciaAbierta",
+    "DigitaLiberties"                => "DigitaLiberties",
+    "North Africa, West Asia"        => "North Africa, West Asia",
+    "oDR"                            => "oDR",
+    "openDemocracyUK"                => "openDemocracyUK",
+    "openJustice"                    => "openJustice",
+    "openMedia"                      => "openMedia",
+    "openMigration"                  => "openMigration",
+    "ourBeeb"                        => "ourBeeb",
+    "ourNHS"                         => "ourNHS",
+    "Shine a Light"                  => "Shine a Light",
+    "Transformation"                 => "Transformation",
+  ] as $name => $label) {
+    $api_get_or_create('OptionValue',
+      [ 'option_group_id' => "od_project_opts", 'name' => $name, ],
+      [ 'label' => $label, 'value' => $name, 'weight' => $weight++ ]);
   }
+
+  // ... Now we can add the Project field to the custom group for contributions.
+  $project = $api_get_or_create('CustomField', [
+    'name' => "od_project",
+    'custom_group_id' => $contribution_custom_group['id'],
+    'data_type' => "String",
+    'html_type' => "Select",
+    'is_required' => "1",
+    'is_searchable' => "1",
+    'default_value' => "unknown",
+    'text_length' => "30",
+    'option_group_id' => $opts_group['id'],
+  ],
+  ['label' => 'oD Project']);
 }
 
 /**
