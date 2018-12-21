@@ -28,6 +28,21 @@ function oddc_civicrm_xmlMenu(&$files) {
  */
 function oddc_civicrm_install() {
   _oddc_civix_civicrm_install();
+
+  // Ensure we have the marketing_consent activity type.
+  $consent_activity = civicrm_api3('OptionValue', 'get', [
+    'sequential' => 1,
+    'option_group_id' => "activity_type",
+    'name' => "marketing_consent",
+  ]);
+  if ($consent_activity['count'] == 0) {
+    $consent_activity = civicrm_api3('OptionValue', 'create', [
+      'option_group_id' => "activity_type",
+      'name'            => "marketing_consent",
+      'label'           => "Consent",
+      'description'     => "Records a log of this contact having given marketing consent to help comply with the GDPR.",
+    ]);
+  }
 }
 
 /**
@@ -144,4 +159,11 @@ function oddc_civicrm_entityTypes(&$entityTypes) {
  */
 function oddc__get_redirect_url($input) {
   return CRM_Oddc::factory()->process($input);
+}
+/**
+ * User has set up mandate at GC, complete this process and set up subscription.
+ *
+ */
+function oddc__complete_redirect_url($input) {
+  return CRM_Oddc::factory()->completeRedirectFlow($input);
 }

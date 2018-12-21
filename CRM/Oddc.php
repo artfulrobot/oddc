@@ -88,17 +88,22 @@ class CRM_Oddc {
       $params[$_] = $input[$_];
     }
 
-    // test mode bool
-    $params['test_mode'] = (!empty($input['test_mode'])) ? 1 : 0;
+    // Booleans
+    foreach (['test_mode', 'giftaid', 'consent'] as $_) {
+      $params[$_] = empty($input[$_]) ? 0 : 1;
+    }
 
     // Things we trust.
-    foreach (['return_url', 'campaign', 'source', 'project', 'legal_entity'] as $_) {
+    foreach (['return_url', 'campaign', 'project', 'legal_entity'] as $_) {
       $params[$_] = $input[$_];
     }
 
+    // Source has come on query string, just check it does not have anything too weird in it.
+    $params['source'] = preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#-]+/', '-', $input['source']);
+
     // Copy other user data as is.
-    foreach (['address', 'city', 'postal_code', 'country'] as $_) {
-      $params[$_] = $input[$_];
+    foreach (['street_address', 'city', 'postal_code', 'country'] as $_) {
+      $params[$_] = $input[$_] ?? '';
     }
 
     $this->input = $params;
@@ -161,6 +166,7 @@ class CRM_Oddc {
         'financial_type_id'      => $this->input['financial_type_id'],
         'frequency_interval'     => 1,
         'frequency_unit'         => "day", //"month", // xxx
+        'campaign_id'            => $this->input['campaign'],
         'is_test'                => $this->input['test_mode'],
         'payment_instrument_id'  => $this->payment_processor->getPaymentInstrumentID(),
         'payment_processor_id'   => $payment_processor_config['id'],
@@ -174,6 +180,8 @@ class CRM_Oddc {
       'contact_id'             => $this->contact_id,
       'financial_type_id'      => $this->input['financial_type_id'],
       'total_amount'           => $this->input['amount'],
+      'source'                 => $this->input['source'],
+      'campaign_id'            => $this->input['campaign'],
       'contribution_status_id' => 'Pending',
       'invoice_id'             => $invoice_id,
       'note'                   => ($this->input['currency'] !== 'GBP')
@@ -183,6 +191,8 @@ class CRM_Oddc {
     if (isset($contrib_recur)) {
       $contrib_params['contribution_recur_id'] = $contrib_recur['id'];
     }
+    $this->setGiftAidParam($contrib_params);
+
     $contribution = civicrm_api3('Contribution', 'create', $contrib_params);
 
     // We can pass various parameters through as 'custom'. (max 256 chars) I think paypal sends these back at the end.
@@ -265,13 +275,30 @@ class CRM_Oddc {
   protected function processGoCardless() {
 
     $token = md5(uniqid(rand()));
+
+    // We have to do the work of
+    // $this->payment_processor->getRedirectParametersFromParams()
+    // Turned out far less code to copy just the relevant bits here than try to reuse that.
+    $payment_processor_config = $this->payment_processor->getPaymentProcessor();
     $params = [
-      'description'          => 'Donation', //xxx
       'session_token'        => $token,
+      'description'          => 'Donation',
       'success_redirect_url' => $this->getUrlWithParams(['gcrf' => 1]),
+      'prefilled_customer' => [
+        'given_name'    => $this->input['first_name'],
+        'family_name'   => $this->input['last_name'],
+        'email'         => $this->input['email'],
+        'address_line1' => $this->input['street_address'],
+        'city'          => $this->input['city'],
+        'postal_code'   => $this->input['postal_code'],
+        'country_code'  => $this->input['country'],
+      ],
     ];
+
+    // Crete Redirect Flow.
     $redirect_flow = $this->payment_processor->getRedirectFlow($params);
 
+    // Initialise session storage.
     if (!isset($_SESSION['odd_gcrf'])) {
       $_SESSION['odd_gcrf'] = [];
     }
@@ -281,33 +308,143 @@ class CRM_Oddc {
     $_SESSION['odd_gcrf'][$redirect_flow->id]['payment_processor_id'] = $this->payment_processor->getPaymentProcessor()['id'];
     $_SESSION['odd_gcrf'][$redirect_flow->id]['description'] = $params['description'];
     $_SESSION['odd_gcrf'][$redirect_flow->id]['session_token'] = $token;
+    $_SESSION['odd_gcrf'][$redirect_flow->id]['contact_id'] = $this->contact_id;
 
-    //CRM_Core_Error::debug_log_message(__FUNCTION__ . ": " . json_encode($redirect_flow) . "\n\n" . serialize($redirect_flow), FALSE, 'GoCardless', PEAR_LOG_INFO);
+    Civi::log()->info("Oddc::processGoCardless. Storing on SESSION:\n{session}",
+      ['session' => json_encode($_SESSION['odd_gcrf'], JSON_PRETTY_PRINT)]);
+
     return ['url' => $redirect_flow->redirect_url];
+  }
+  /**
+   * Create the subscription.
+   *
+   * @param array $input is query string data from GC.
+   */
+  public function completeRedirectFlow($input) {
+
+    Civi::log()->info("Oddc::completeRedirectFlow. \nGET: {input}\n\nSESSION: {session}",
+      ['input' => json_encode($input), 'session' => json_encode($_SESSION['odd_gcrf'], JSON_PRETTY_PRINT)]);
+
+    // We are passed a redirect_flow_id; this must exist on our session.
+    $redirect_flow_id = $input['redirect_flow_id'] ?? 'missing';
+    if (empty($_SESSION['odd_gcrf'][$redirect_flow_id])) {
+      throw new \Exception("Direct Debit could not be set up. This process requires cookies.");
+    }
+    $pre_data = $_SESSION['odd_gcrf'][$redirect_flow_id];
+
+    // Unpack some of the stashed-in-session data for our convenience.
+    $this->input = $input;
+    $this->payment_processor = Civi\Payment\System::singleton()->getById($pre_data['payment_processor_id']);
+    $this->contact_id = $pre_data['contact_id'];
+
+    // Complete the redirect flow with GC.
+    $params = [
+      'redirect_flow_id' => $redirect_flow_id,
+      'interval_unit'    => 'monthly', // xxx
+    ] + $pre_data;
+    $result = CRM_GoCardlessUtils::completeRedirectFlowWithGoCardless($params);
+    $gc_api        = $result['gc_api'];
+    $redirect_flow = $result['redirect_flow'];
+    $subscription  = $result['subscription'];
+
+    // Create a ContributionRecur record.
+    $financial_type_id = 'Donation'; // xxx
+
+    $contrib_recur = civicrm_api3('ContributionRecur', 'create', array(
+      'amount'                 => $params['amount'],
+      'contact_id'             => $this->contact_id,
+      'contribution_status_id' => "Pending", // This is useful and should get changed to
+                                             // In Progress after successful payment.
+      'currency'               => 'GBP', // fixed.
+      'financial_type_id'      => $financial_type_id,
+      'frequency_interval'     => 1,
+      'frequency_unit'         => "month", // xxx
+      'campaign_id'            => $params['campaign'],
+      'is_test'                => $this->payment_processor->isTestMode(),
+      'payment_instrument_id'  => 'direct_debit_gc',
+      'payment_processor_id'   => $params['payment_processor_id'],
+      'start_date'             => $subscription->start_date,
+      'trxn_id'                => $subscription->id,
+    ));
+
+    // Create a pending Contribution record.
+    $contrib_recur = civicrm_api3('Contribution', 'create', array(
+      'amount'                 => $params['amount'],
+      'contact_id'             => $this->contact_id,
+      'contribution_recur_id'  => $contrib_recur['id'],
+      'contribution_status_id' => "Pending", // This is useful and should get changed to In Progress
+      'currency'               => 'GBP', // fixed.
+      'financial_type_id'      => $financial_type_id,
+      'campaign_id'            => $params['campaign'],
+      'source'                 => $params['source'],
+      'is_test'                => $this->payment_processor->isTestMode(),
+      'payment_instrument_id'  => 'direct_debit_gc',
+      'payment_processor_id'   => $params['payment_processor_id'],
+      'receive_date'           => $subscription->start_date,
+      'total_amount'           => $params['amount'],
+    ));
   }
   /**
    * Find or create CiviCRM contact.
    */
   public function getOrCreateContact() {
 
-    // Find or create contact @todo use Björn's thing.
-    $contact = civicrm_api3('Contact', 'get', ['sequential' => 1, 'email' => $this->input['email'], 'contact_type' => 'Individual']);
-    if ($contact['count'] != 1) {
-      $contact = civicrm_api3('Contact', 'create', [
-        'first_name' => $this->input['first_name'],
-        'last_name' => $this->input['last_name'],
-      ]);
-      civicrm_api3('Email', 'create', [
-        'contact_id' => $contact['id'],
-        'email' => $this->input['email'],
-        'is_primary' => 1,
-      ]);
+    if (civicrm_api3('Extension', 'getcount', ['key' => 'de.systopia.xcm', 'is_active' => 1]) == 1) {
+      // Assume we have XCM
+      $params = array_intersect_key($this->input, array_flip(['email', 'first_name', 'last_name', 'street_address', 'city', 'postal_code', 'country']));
+      $contact = civicrm_api3('Contact', 'getorcreate', $params);
+    }
+    else {
+      // Fallback.
+      $contact = civicrm_api3('Contact', 'get', ['sequential' => 1, 'email' => $this->input['email'], 'contact_type' => 'Individual']);
+      if ($contact['count'] != 1) {
+        $contact = civicrm_api3('Contact', 'create', [
+          'first_name' => $this->input['first_name'],
+          'last_name' => $this->input['last_name'],
+        ]);
+        civicrm_api3('Email', 'create', [
+          'contact_id' => $contact['id'],
+          'email' => $this->input['email'],
+          'is_primary' => 1,
+        ]);
+      }
     }
     $this->contact_id = $contact['id'];
 
-    // Store address.
-    // @todo
     // Store Gift Aid
+    if (!empty($this->input['giftaid'])
+      && (civicrm_api3('Extension', 'getcount', ['key' => 'uk.co.compucorp.civicrm.giftaid', 'is_active' => 1]) == 1)) {
+      // Got a Gift Aid declaration, and compucorp's gift aid extension is in use.
+      //
+      $addressDetails = _civigiftaid_civicrm_custom_get_address_and_postal_code($this->contact_id);
+
+      require_once 'CRM/Civigiftaid/Utils/GiftAid.php';
+      $params = array(
+        'entity_id'             => $this->contact_id,
+        'eligible_for_gift_aid' => 1,
+        'start_date'            => date('Y-m-d'),
+        'address'               => $addressDetails[0],
+        'post_code'             => $addressDetails[1],
+      );
+      CRM_Civigiftaid_Utils_GiftAid::setDeclaration($params);
+    }
+
+    // Store consent.
+    if (!empty($this->input['consent'])) {
+      // Create an activity.
+      $consent_activity = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"]);
+      if (!empty($consent_activity['values'][0]['value'])) {
+        civicrm_api3('Activity', 'create', [
+          'source_contact_id'  => $this->contact_id,
+          'activity_type_id'   => $consent_activity['values'][0]['value'],
+          'target_id'          => $this->contact_id,
+          'subject'            => 'Gave consent at time of making donation.',
+          'details'            => '<p>Donation page at ' . htmlspecialchars($this->input['return_url']) . '</p>',
+          'status_id'          => 'Completed',
+          'activity_date_time' => date('Y-m-d H:i:s'),
+        ]);
+      }
+    }
   }
   /**
    * Create a URL from the return_url appending the params.
@@ -319,5 +456,17 @@ class CRM_Oddc {
     $url = $this->input['return_url'];
     $join = strstr($url, '?') ? '&' : '?';
     return $url . $join . http_build_query($params);
+  }
+  /**
+   * Lookup the custom field ID for Compucorp's Giftaid extension and set it as
+   * a parameter for the Contribution.create call.
+   *
+   * @param &Array params for the Contribution.create API call.
+   */
+  protected function setGiftAidParam(&$params) {
+    // Look up the custom_N name for the field.
+    require_once 'CRM/Core/BAO/CustomField.php';
+    $id = CRM_Core_BAO_CustomField::getCustomFieldID('Eligible_for_Gift_Aid', 'Gift_Aid');
+    $params["custom_$id"] = $this->input['giftaid'];
   }
 }

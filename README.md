@@ -1,44 +1,17 @@
 # oddc
 
-![Screenshot](/images/screenshot.png)
+## Metadata
 
-(*FIXME: In one or two paragraphs, describe what the extension does and why one would download it. *)
+- **Source**
 
-The extension is licensed under [AGPL-3.0](LICENSE.txt).
+   This is a free text string passed in on the query string as source=...
+   It is stored on the Contribution's built-in source field.
 
-## Requirements
+- **Campaign**
 
-* PHP v5.4+
-* CiviCRM (*FIXME: Version number*)
+   This is the CiviCRM campaign field. It is stored on both the Contribution and
+   the recurring Contribution recordss.
 
-## Installation (Web UI)
+- **Project**
 
-This extension has not yet been published for installation via the web UI.
-
-## Installation (CLI, Zip)
-
-Sysadmins and developers may download the `.zip` file for this extension and
-install it with the command-line tool [cv](https://github.com/civicrm/cv).
-
-```bash
-cd <extension-dir>
-cv dl oddc@https://github.com/FIXME/oddc/archive/master.zip
-```
-
-## Installation (CLI, Git)
-
-Sysadmins and developers may clone the [Git](https://en.wikipedia.org/wiki/Git) repo for this extension and
-install it with the command-line tool [cv](https://github.com/civicrm/cv).
-
-```bash
-git clone https://github.com/FIXME/oddc.git
-cv en oddc
-```
-
-## Usage
-
-(* FIXME: Where would a new user navigate to get started? What changes would they see? *)
-
-## Known Issues
-
-(* FIXME *)
+   This is a string and is stored on a custom field on contributions.
