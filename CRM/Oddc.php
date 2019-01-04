@@ -179,10 +179,12 @@ class CRM_Oddc {
     $contrib_params = [
       'contact_id'             => $this->contact_id,
       'financial_type_id'      => $this->input['financial_type_id'],
+      'payment_instrument_id'  => $this->payment_processor->getPaymentInstrumentID(),
       'total_amount'           => $this->input['amount'],
       'source'                 => $this->input['source'],
       'campaign_id'            => $this->input['campaign'],
       'contribution_status_id' => 'Pending',
+      'is_test'                => $this->input['test_mode'],
       'invoice_id'             => $invoice_id,
       'note'                   => ($this->input['currency'] !== 'GBP')
                                   ? "Payment made as {$this->input['currency']}{$this->input['amount']}, taken in GBP [total_is_in_wrong_currency]"
@@ -296,7 +298,7 @@ class CRM_Oddc {
       ],
     ];
 
-    // Crete Redirect Flow.
+    // Create Redirect Flow.
     $redirect_flow = $this->payment_processor->getRedirectFlow($params);
 
     // Initialise session storage.
@@ -312,12 +314,15 @@ class CRM_Oddc {
     $_SESSION['odd_gcrf'][$redirect_flow->id]['contact_id'] = $this->contact_id;
 
     Civi::log()->info("Oddc::processGoCardless. Storing on SESSION:\n{session}",
-      ['session' => json_encode($_SESSION['odd_gcrf'], JSON_PRETTY_PRINT)]);
+      ['session' => json_encode($_SESSION['odd_gcrf'][$redirect_flow->id], JSON_PRETTY_PRINT)]);
 
     return ['url' => $redirect_flow->redirect_url];
   }
   /**
    * Create the subscription.
+   *
+   * Called from oddc__complete_redirect_url() which is called by Drupal's
+   * preprocess node hook when gcrf is present on GET data.
    *
    * @param array $input is query string data from GC.
    */
@@ -334,7 +339,7 @@ class CRM_Oddc {
     $pre_data = $_SESSION['odd_gcrf'][$redirect_flow_id];
 
     // Unpack some of the stashed-in-session data for our convenience.
-    $this->input = $input;
+    $this->input = $input + $pre_data;
     $this->payment_processor = Civi\Payment\System::singleton()->getById($pre_data['payment_processor_id']);
     $this->contact_id = $pre_data['contact_id'];
 
@@ -471,7 +476,7 @@ class CRM_Oddc {
     // Look up the custom_N name for the field.
     require_once 'CRM/Core/BAO/CustomField.php';
     $id = CRM_Core_BAO_CustomField::getCustomFieldID('Eligible_for_Gift_Aid', 'Gift_Aid');
-    $params["custom_$id"] = $this->input['giftaid'];
+    $params["custom_$id"] = $this->input['giftaid'] ?? FALSE;
   }
   /**
    * Lookup the custom field ID for project and set it as
