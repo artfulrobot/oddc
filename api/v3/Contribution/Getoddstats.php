@@ -44,8 +44,9 @@ function civicrm_api3_contribution_Getoddstats($params) {
     break;
 
   case 'day':
-    $sql_date_format = 'DATE_FORMAT(receive_date, "%Y%m%d")';
-    $sql_display_format = 'DATE_FORMAT(receive_date, "%e %M %Y")';
+    $sql_date_format = 'DATE_FORMAT(receive_date, "%Y-%m-%d")';
+    #$sql_display_format = 'DATE_FORMAT(receive_date, "%e %M %Y")';
+    $sql_display_format = $sql_date_format;
     break;
 
   case 'month':
