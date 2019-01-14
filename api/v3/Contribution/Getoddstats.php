@@ -81,6 +81,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
       campaign_id,
       proj.`$field_name` project,
       source,
+      cc.contribution_recur_id recur,
       SUM(net_amount) amount,
       COUNT(*) contributions
     FROM civicrm_contribution cc
@@ -96,12 +97,13 @@ function civicrm_api3_contribution_Getoddstats($params) {
       $campaign_ids[$dao->campaign_id] = FALSE;
     }
     $result[] = [
-      $dao->period,
-      $dao->campaign_id,
-      $dao->project,
-      $dao->source,
-      (double) $dao->amount,
-      (int) $dao->contributions,
+      $dao->period,              // 0
+      $dao->campaign_id,         // 1
+      $dao->project,             // 2
+      $dao->source,              // 3
+      $dao->recur ? 1 : 0,       // 4
+      (double) $dao->amount,     // 5
+      (int) $dao->contributions, // 6
     ];
   }
   $dao->free();
@@ -121,7 +123,37 @@ function civicrm_api3_contribution_Getoddstats($params) {
   }
   $result['campaigns'] = $campaigns;
 
-    // Spec: civicrm_api3_create_success($values = 1, $params = array(), $entity = NULL, $action = NULL)
+  // Get joiners and leavers from the contrib recur.
+  $sql = "SELECT
+      $sql_display_format period,
+      SUM(amount) amount,
+      COUNT(*) people
+    FROM civicrm_contribution_recur cr
+    WHERE is_test = 0 $date_from_sql $date_to_sql
+      AND $sql_display_format IS NOT NULL AND receive_date IS NOT NULL
+    GROUP BY $sql_date_format DESC
+    ORDER BY $sql_date_format DESC
+  ";
+  $result['recur'] = [];
+  foreach (['create_date', 'start_date', 'cancel_date', 'end_date'] as $field) {
+    $sql1 = str_replace('receive_date', $field, $sql);
+    $dao = CRM_Core_DAO::executeQuery($sql1, $sql_params);
+    while ($dao->fetch()) {
+      if (!isset($result['recur'][$dao->period])) {
+        $result['recur'][$dao->period] = [
+          'period' => $dao->period,
+          'create_date' => [0, 0],
+          'start_date'  => [0, 0],
+          'cancel_date' => [0, 0],
+          'end_date'    => [0, 0],
+        ];
+      }
+      $result['recur'][$dao->period][$field] = [(double)$dao->amount, (int)$dao->people];
+    }
+  }
+  $result['recur'] = array_values($result['recur']);
+
+
   return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');
-    //throw new API_Exception(/*errorMessage*/ 'Everyone knows that the magicword is "sesame"', /*errorCode*/ 1234);
+  //throw new API_Exception(/*errorMessage*/ 'Everyone knows that the magicword is "sesame"', /*errorCode*/ 1234);
 }

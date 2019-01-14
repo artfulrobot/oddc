@@ -5,10 +5,10 @@ class CRM_Oddc {
   public $input;
 
   /** @var array Hard coded map of payment processor ids until a better method in place.
-   * @xxx needs more setup.
+   * @todo Update payment processor map
    */
   public $payment_processor_map = [
-    'GoCardless' => [ 'company' => 'GoCardless20181009', 'charity' => 'GoCardless20181009' ],
+    'GoCardless' => [ 'company' => 'GoCardless – Company account', 'charity' => 'GoCardless – Company account' ],
     'PayPal' =>     [ 'company' => 'paypal',             'charity' => 'paypal openTrust (GiftAid)' ],
   ];
 
@@ -37,7 +37,7 @@ class CRM_Oddc {
       return $this->routeToPaymentProcessor();
     }
     catch (CRM_Oddc_ValidationError $e) {
-      return ['error' => $e->getMessage()];
+      return ['error' => $e->getMessage(), 'user_error' => $e->getMessage()];
     }
     catch (Exception $e) {
       return ['error' => 'Server problem: ' . $e->getMessage()];
@@ -49,7 +49,7 @@ class CRM_Oddc {
   public function validate($input) {
 
     // Leave $input as is, but clean it up into $params.
-    $params = ['financial_type_id' => 'Donation']; // xxx
+    $params = ['financial_type_id' => 'Donation'];
     $params['is_recur'] = (!empty($input['is_recur'])) ? 1: 0;
 
     // Validate geo country name.
@@ -75,7 +75,7 @@ class CRM_Oddc {
 
     // Validate email.
     if (!preg_match('/[^@ <>"]+@[a-z0-9A-Z_-]+\.[a-z0-9A-Z_.-]+$/', $input['email'])) {
-      throw new CRM_Oddc_ValidationError("Invalid Email");
+      throw new CRM_Oddc_ValidationError("The email address is invalid");
     }
     $params['email'] = $input['email'];
 
@@ -165,7 +165,7 @@ class CRM_Oddc {
         'amount'                 => $this->input['amount'], // Nb. this is not correct if not actually paid in GBP but is required to match the numeric amount for PayPal webhooks.
         'financial_type_id'      => $this->input['financial_type_id'],
         'frequency_interval'     => 1,
-        'frequency_unit'         => "day", //"month", // xxx
+        'frequency_unit'         => "day", //"month", //@todo reset to month
         'campaign_id'            => $this->input['campaign'],
         'is_test'                => $this->input['test_mode'],
         'payment_instrument_id'  => $this->payment_processor->getPaymentInstrumentID(),
@@ -209,7 +209,7 @@ class CRM_Oddc {
     $paypalParams = [
       'business'           => $payment_processor_config['user_name'],
       'notify_url'         => $ipn_url,
-      'item_name'          => 'Donation', // xxx
+      'item_name'          => 'Donation',
       'quantity'           => 1,
       'undefined_quantity' => 0, // Don't know what this is.
       'no_note'            => 1,
@@ -231,7 +231,7 @@ class CRM_Oddc {
         'cmd' => '_xclick-subscriptions',
         'a3'  => $this->input['amount'],
         'p3'  => 1, //$params['frequency_interval'], // e.g. 1 with t3='M' means every (1) month
-        't3'  => 'D', // ucfirst(substr($params['frequency_unit'], 0, 1)), /xxx set to M for month!
+        't3'  => 'D',// @todo set to M for month!
         'sra' => 1, // retry failed payments (up to two more tries).
         'src' => 1, // subscription recurs.
         // I think not sending 'srt' might mean indefinite recurring payments.
@@ -346,7 +346,7 @@ class CRM_Oddc {
     // Complete the redirect flow with GC.
     $params = [
       'redirect_flow_id' => $redirect_flow_id,
-      'interval_unit'    => 'monthly', // xxx
+      'interval_unit'    => 'monthly',
     ] + $pre_data;
     $result = CRM_GoCardlessUtils::completeRedirectFlowWithGoCardless($params);
     $gc_api        = $result['gc_api'];
@@ -354,7 +354,7 @@ class CRM_Oddc {
     $subscription  = $result['subscription'];
 
     // Create a ContributionRecur record.
-    $financial_type_id = 'Donation'; // xxx
+    $financial_type_id = 'Donation';
 
     $contrib_recur = civicrm_api3('ContributionRecur', 'create', array(
       'amount'                 => $params['amount'],
@@ -364,7 +364,7 @@ class CRM_Oddc {
       'currency'               => 'GBP', // fixed.
       'financial_type_id'      => $financial_type_id,
       'frequency_interval'     => 1,
-      'frequency_unit'         => "month", // xxx
+      'frequency_unit'         => "month",
       'campaign_id'            => $params['campaign'],
       'is_test'                => $this->payment_processor->isTestMode(),
       'payment_instrument_id'  => 'direct_debit_gc',
