@@ -10,9 +10,10 @@ use CRM_Oddc_ExtensionUtil as E;
  * @see http://wiki.civicrm.org/confluence/display/CRMDOC/API+Architecture+Standards
  */
 function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
-  $spec['date_from'] = ['description' => 'Optional earliest date'];
-  $spec['date_to'] = ['description' => 'Optional latest date'];
-  $spec['granularity'] = ['description' => 'Date granularity', 'options' => ['day', 'week', 'month', 'quarter', 'year'], 'default' => 'week'];
+  $spec['date_from'] = ['description' => 'Optional earliest date (not used by the report)'];
+  $spec['date_to'] = ['description' => 'Optional latest date (not used by the report)'];
+  $spec['granularity'] = ['description' => 'Date granularity (not used by the report - day used only)', 'options' => ['day', 'week', 'month', 'quarter', 'year'], 'default' => 'week'];
+  $spec['first_only'] = ['description' => 'Only include the first contribution', 'options' => [0 => 'No', 1 => 'Yes'], 'default' => 0];
 }
 
 /**
@@ -27,6 +28,36 @@ function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
 function civicrm_api3_contribution_Getoddstats($params) {
   $result = [ ];
 
+  if (!empty($params['test'])) {
+    $result = [
+      'contributions' => [
+        [ '2017-01-01', 1, 'Project A', 0, 1, 10, 1 ],
+        [ '2017-02-01', 1, 'Project B', 1, 0, 10, 1 ],
+        [ '2017-06-01', 1, 'Project A', 1, 0, 10, 1 ],
+        [ '2018-01-01', 2, 'Project B', 2, 0, 10, 1 ],
+        [ '2019-01-01', 2, 'Project A', 2, 1, 10, 1 ],
+      ],
+      'sources' => [
+        [ 'name'=> 'Source A' ],
+        [ 'name'=> 'Email A', 'opened_rate'=>"88.23%", 'clickthrough_rate'=> "2.56%", 'Delivered'=> "23414" ],
+        [ 'name'=> 'Email B', 'opened_rate'=>"90.12%", 'clickthrough_rate'=> "10.56%", 'Delivered'=> "12323" ],
+      ],
+      'campaigns' => [
+        1 => 'Campaign A',
+        2 => 'Campaign B',
+      ],
+      'recur' => [
+        [
+          'period' => '2017-01-01',
+          'create_date' => [0, 0],
+          'start_date'  => [0, 0],
+          'cancel_date' => [0, 0],
+          'end_date'    => [0, 0],
+        ]
+      ]
+    ];
+    return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');
+  }
   switch ($params['granularity'] ?? '') {
   case 'year':
     $sql_date_format = 'DATE_FORMAT(receive_date, "%Y")';
@@ -75,6 +106,17 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
 
+  $first_contrib = '';
+  if ($params['first_only'] ?? FALSE) {
+    // We are only interested in the first contribution for any recurring contribution.
+    $first_contrib = 'AND (cc.contribution_recur_id IS NULL
+      OR NOT EXISTS (
+        SELECT id FROM civicrm_contribution cc_first
+        WHERE cc.contribution_recur_id = cc_first.contribution_recur_id
+          AND cc_first.id < cc.id
+      ))';
+  }
+
   $sql_params = [];
   $sql = "SELECT
       $sql_display_format period,
@@ -86,21 +128,28 @@ function civicrm_api3_contribution_Getoddstats($params) {
       COUNT(*) contributions
     FROM civicrm_contribution cc
     LEFT JOIN `$table_name` proj ON proj.entity_id = cc.id
-    WHERE is_test = 0 $date_from_sql $date_to_sql
+    WHERE is_test = 0 $date_from_sql $date_to_sql $first_contrib
     GROUP BY $sql_date_format DESC, campaign_id, proj.`$field_name`, source
     ORDER BY $sql_date_format DESC
   ";
   $dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
   $campaign_ids = [];
+  // Normalise the sources data.
+  $unique_sources = [];
+
   while ($dao->fetch()) {
     if ($dao->campaign_id) {
       $campaign_ids[$dao->campaign_id] = FALSE;
+    }
+    $source = $dao->source ? $dao->source : '(None)';
+    if (!isset($unique_sources[$source])) {
+      $unique_sources[$source] = count($unique_sources);
     }
     $result[] = [
       $dao->period,              // 0
       $dao->campaign_id,         // 1
       $dao->project,             // 2
-      $dao->source,              // 3
+      $unique_sources[$source],  // 3
       $dao->recur ? 1 : 0,       // 4
       (double) $dao->amount,     // 5
       (int) $dao->contributions, // 6
@@ -122,6 +171,35 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
   $result['campaigns'] = $campaigns;
+
+
+  // Load all completed mailings.
+  $mailings = civicrm_api3('Mailing', 'get', [
+    'return'       => ["name"],
+    'is_completed' => 1,
+    'options'      => ['limit' => 0],
+  ]);
+  $mailing_stats = [];
+  $a = ['sources' => $unique_sources];
+  foreach ($mailings['values'] as $mailing) {
+    $a['maling'] = $mailing;
+    if (isset($unique_sources[$mailing['name']])) {
+      // This mailing name was also used as a source.
+      // Look up mailing stats for this mailing.
+      $stats = civicrm_api3('Mailing', 'stats', ['mailing_id' => $mailing['id'], 'sequential' => 1]);
+      $mailing_stats[$unique_sources[$mailing['name']]] = $stats['values'];
+    }
+  }
+  // Create the source lookup data.
+  $result['sources'] = [];
+  foreach ($unique_sources as $name => $idx) {
+    $result['sources'][$idx] = [
+      'name' => $name,
+    ];
+    if (isset($mailing_stats[$idx])) {
+      $result['sources'][$idx] += $mailing_stats[$idx];
+    }
+  }
 
   // Get joiners and leavers from the contrib recur.
   $sql = "SELECT
