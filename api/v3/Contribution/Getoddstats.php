@@ -13,7 +13,6 @@ function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
   $spec['date_from'] = ['description' => 'Optional earliest date (not used by the report)'];
   $spec['date_to'] = ['description' => 'Optional latest date (not used by the report)'];
   $spec['granularity'] = ['description' => 'Date granularity (not used by the report - day used only)', 'options' => ['day', 'week', 'month', 'quarter', 'year'], 'default' => 'week'];
-  $spec['first_only'] = ['description' => 'Only include the first contribution', 'options' => [0 => 'No', 1 => 'Yes'], 'default' => 0];
 }
 
 /**
@@ -31,11 +30,24 @@ function civicrm_api3_contribution_Getoddstats($params) {
   if (!empty($params['test'])) {
     $result = [
       'contributions' => [
-        [ '2017-01-01', 1, 'Project A', 0, 1, 10, 1 ],
-        [ '2017-02-01', 1, 'Project B', 1, 0, 10, 1 ],
-        [ '2017-06-01', 1, 'Project A', 1, 0, 10, 1 ],
-        [ '2018-01-01', 2, 'Project B', 2, 0, 10, 1 ],
-        [ '2019-01-01', 2, 'Project A', 2, 1, 10, 1 ],
+        // period       campaign,  project    source_idx recur      amount, contribs
+        // Couple of one-offs.
+        [ '2017-01-01', 1,        'Project A', 0,       'one-off',  10,     1 ],
+        [ '2018-01-01', 2,        'Project B', 1,       'one-off',  10,     1 ],
+        // Some regulars
+        [ '2017-02-01', 1,        'Project B', 1,       'first',    10,     1 ],
+        [ '2017-03-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-04-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-05-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-06-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-07-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-08-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-09-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-10-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        // Another regular
+        [ '2017-06-01', 2,        'Project A', 2,       'first',    30,     2 ],
+        [ '2018-01-01', 2,        'Project A', 2,       'repeat',   30,     2 ],
+        [ '2019-01-01', 2,        'Project A', 2,       'repeat',   30,     2 ],
       ],
       'sources' => [
         [ 'name'=> 'Source A' ],
@@ -106,16 +118,6 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
 
-  $first_contrib = '';
-  if ($params['first_only'] ?? FALSE) {
-    // We are only interested in the first contribution for any recurring contribution.
-    $first_contrib = 'AND (cc.contribution_recur_id IS NULL
-      OR NOT EXISTS (
-        SELECT id FROM civicrm_contribution cc_first
-        WHERE cc.contribution_recur_id = cc_first.contribution_recur_id
-          AND cc_first.id < cc.id
-      ))';
-  }
 
   $sql_params = [];
   $sql = "SELECT
@@ -123,14 +125,22 @@ function civicrm_api3_contribution_Getoddstats($params) {
       campaign_id,
       proj.`$field_name` project,
       source,
-      cc.contribution_recur_id recur,
+      IF(cc.contribution_recur_id IS NULL,
+        'one-off',
+        IF (EXISTS (
+            SELECT id FROM civicrm_contribution cc_first
+            WHERE cc.contribution_recur_id = cc_first.contribution_recur_id
+              AND cc_first.id < cc.id
+          ),
+        'repeat',
+        'first'
+        )) recur,
       SUM(net_amount) amount,
       COUNT(*) contributions
     FROM civicrm_contribution cc
     LEFT JOIN `$table_name` proj ON proj.entity_id = cc.id
-    WHERE is_test = 0 $date_from_sql $date_to_sql $first_contrib
-    GROUP BY $sql_date_format DESC, campaign_id, proj.`$field_name`, source
-    ORDER BY $sql_date_format DESC
+    WHERE is_test = 0 $date_from_sql $date_to_sql
+    GROUP BY $sql_date_format DESC, campaign_id, proj.`$field_name`, source, recur
   ";
   $dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
   $campaign_ids = [];
@@ -150,7 +160,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
       $dao->campaign_id,         // 1
       $dao->project,             // 2
       $unique_sources[$source],  // 3
-      $dao->recur ? 1 : 0,       // 4
+      $dao->recur,               // 4
       (double) $dao->amount,     // 5
       (int) $dao->contributions, // 6
     ];
@@ -173,31 +183,46 @@ function civicrm_api3_contribution_Getoddstats($params) {
   $result['campaigns'] = $campaigns;
 
 
-  // Load all completed mailings.
-  $mailings = civicrm_api3('Mailing', 'get', [
-    'return'       => ["name"],
-    'is_completed' => 1,
-    'options'      => ['limit' => 0],
-  ]);
-  $mailing_stats = [];
-  $a = ['sources' => $unique_sources];
-  foreach ($mailings['values'] as $mailing) {
-    $a['maling'] = $mailing;
-    if (isset($unique_sources[$mailing['name']])) {
-      // This mailing name was also used as a source.
-      // Look up mailing stats for this mailing.
-      $stats = civicrm_api3('Mailing', 'stats', ['mailing_id' => $mailing['id'], 'sequential' => 1]);
-      $mailing_stats[$unique_sources[$mailing['name']]] = $stats['values'];
+  // Add Email stats.
+  $mailing_ids = [];
+  foreach ($unique_sources as $text => $count) {
+    if (preg_match('/^mailing(\d+)$/', $text, $matches)) {
+      $mailing_ids[$text] = $matches[1];
     }
   }
+
+  // Load all mailings found in sources.
+  $mailings = [];
+  if ($mailing_ids) {
+    $mailings = civicrm_api3('Mailing', 'get', [
+      'return'       => ["name"],
+      'id'           => ['IN' => array_values($mailing_ids)],
+      'options'      => ['limit' => 0],
+    ]);
+    $mailings = $mailings['values'] ?? [];
+  }
+
   // Create the source lookup data.
   $result['sources'] = [];
   foreach ($unique_sources as $name => $idx) {
-    $result['sources'][$idx] = [
-      'name' => $name,
-    ];
-    if (isset($mailing_stats[$idx])) {
-      $result['sources'][$idx] += $mailing_stats[$idx];
+    // IF $name is a mailing.
+    if (isset($mailing_ids[$name]) && isset($mailings[$mailing_ids[$name]])) {
+      // This is a mailing and we have been able to load it's name.
+      $mailing_id = $mailing_ids[$name];
+      $mailing = $mailings[$mailing_id];
+      // Make the name a bit nicer.
+      $result['sources'][$idx] = [
+        'name' => $name . ': ' . $mailing['name'],
+      ];
+      // Add in the stats.
+      $stats = civicrm_api3('Mailing', 'stats', ['mailing_id' => $mailing_id]);
+      if (!empty($stats['values'][$mailing_id])) {
+        $result['sources'][$idx] += $stats['values'][$mailing_id];
+      }
+    }
+    else {
+      // Not a mailing, just output the source name as is.
+      $result['sources'][$idx] = [ 'name' => $name, ];
     }
   }
 
