@@ -89,12 +89,12 @@ class CRM_Oddc {
     }
 
     // Booleans
-    foreach (['test_mode', 'giftaid', 'consent'] as $_) {
+    foreach (['test_mode', 'giftaid', 'consent', 'include_address'] as $_) {
       $params[$_] = empty($input[$_]) ? 0 : 1;
     }
 
     // Things we trust.
-    foreach (['return_url', 'campaign', 'project', 'legal_entity'] as $_) {
+    foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list'] as $_) {
       $params[$_] = $input[$_];
     }
 
@@ -400,7 +400,11 @@ class CRM_Oddc {
 
     if (civicrm_api3('Extension', 'getcount', ['key' => 'de.systopia.xcm', 'is_active' => 1]) == 1) {
       // Assume we have XCM
-      $params = array_intersect_key($this->input, array_flip(['email', 'first_name', 'last_name', 'street_address', 'city', 'postal_code', 'country']));
+      $required_params = ['email', 'first_name', 'last_name' ];
+      if ($this->input['include_address']) {
+        $required_params = array_merge($required_params, ['street_address', 'city', 'postal_code', 'country']);
+      }
+      $params = array_intersect_key($this->input, array_flip($required_params));
       $contact = civicrm_api3('Contact', 'getorcreate', $params);
     }
     else {
@@ -439,19 +443,38 @@ class CRM_Oddc {
     }
 
     // Store consent.
-    if (!empty($this->input['consent'])) {
-      // Create an activity.
-      $consent_activity = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"]);
-      if (!empty($consent_activity['values'][0]['value'])) {
-        civicrm_api3('Activity', 'create', [
-          'source_contact_id'  => $this->contact_id,
-          'activity_type_id'   => $consent_activity['values'][0]['value'],
-          'target_id'          => $this->contact_id,
-          'subject'            => 'Gave consent at time of making donation.',
-          'details'            => '<p>Donation page at ' . htmlspecialchars($this->input['return_url']) . '</p>',
-          'status_id'          => 'Completed',
-          'activity_date_time' => date('Y-m-d H:i:s'),
-        ]);
+    if ($this->input['mailing_list']) {
+
+      $mailing_list_name = civicrm_api3('group', 'get', ['id' => $this->input['mailing_list'], 'return' => 'title', 'sequential' => 1]);
+      $mailing_list_name = $mailing_list_name['values'][0]['title'] ?? '';
+
+      if (!$mailing_list_name) {
+        watchdog('odd', 'Failed to load mailing list for @id', ['@id' => $this->input['mailing_list']], WATCHDOG_ERROR);
+      }
+
+      if ($mailing_list_name && !empty($this->input['consent'])) {
+        // Create an activity.
+        $consent_activity = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"]);
+
+        if (!empty($consent_activity['values'][0]['value'])) {
+          civicrm_api3('Activity', 'create', [
+            'source_contact_id'  => $this->contact_id,
+            'activity_type_id'   => $consent_activity['values'][0]['value'],
+            'target_id'          => $this->contact_id,
+            'subject'            => 'Gave consent at time of making donation.',
+            'details'            => '<p>Donation page at '
+                                    . htmlspecialchars($this->input['return_url'])
+                                    . '</p>'
+                                    . '<p>Group: #' . $this->input['mailing_list'] . ' '
+                                    . htmlspecialchars($mailing_list_name) . '</p>',
+            'status_id'          => 'Completed',
+            'activity_date_time' => date('Y-m-d H:i:s'),
+          ]);
+        }
+
+        // Add the contact to the list.
+        $contact_ids = [$this->contact_id];
+        CRM_Contact_BAO_GroupContact::addContactsToGroup($contact_ids, $this->input['mailing_list']);
       }
     }
   }

@@ -41,8 +41,14 @@ function oddc_civicrm_install() {
     $params_min += ['sequential' => 1];
     $result = civicrm_api3($entity, 'get', $params_min);
     if (!$result['count']) {
+      Civi::log()->notice('get_or_create Could not find entity, creating now', ['entity' => $entity, 'min' => $params_min, 'extra' => $params_extra]);
       // Couldn't find it, create it now.
       $result = civicrm_api3($entity, 'create', $params_extra + $params_min);
+      // reload
+      $result = civicrm_api3($entity, 'get', $params_min);
+    }
+    else {
+      Civi::log()->notice('get_or_create Found entity', ['entity' => $entity, 'min' => $params_min, 'found' => $result['values'][0]]);
     }
     return $result['values'][0];
   };

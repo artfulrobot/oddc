@@ -50,6 +50,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
         [ '2019-01-01', 2,        'Project A', 2,       'repeat',   30,     2 ],
       ],
       'sources' => [
+        [ 'name' => 'None'],
         [ 'name'=> 'Source A' ],
         [ 'name'=> 'Email A', 'opened_rate'=>"88.23%", 'clickthrough_rate'=> "2.56%", 'Delivered'=> "23414" ],
         [ 'name'=> 'Email B', 'opened_rate'=>"90.12%", 'clickthrough_rate'=> "10.56%", 'Delivered'=> "12323" ],
@@ -145,7 +146,8 @@ function civicrm_api3_contribution_Getoddstats($params) {
   $dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
   $campaign_ids = [];
   // Normalise the sources data.
-  $unique_sources = [];
+  // Ensure the 0 index-ed item is for None; we know we'll need this.
+  $unique_sources = ['(None)' => 0];
 
   while ($dao->fetch()) {
     if ($dao->campaign_id) {
