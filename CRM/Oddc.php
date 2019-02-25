@@ -8,8 +8,8 @@ class CRM_Oddc {
    * @todo Update payment processor map
    */
   public $payment_processor_map = [
-    'GoCardless' => [ 'company' => 'GoCardless – Company account', 'charity' => 'GoCardless – Company account' ],
-    'PayPal' =>     [ 'company' => 'paypal',             'charity' => 'paypal openTrust (GiftAid)' ],
+    'GoCardless' => [ 'company' => 'openDemocracy GoCardless Direct Debit', 'charity' => 'openTrust GoCardless Direct Debit' ],
+    'PayPal'     => [ 'company' => 'openDemocracy PayPal'                 , 'charity' => 'openTrust PayPal' ]                 ,
   ];
 
   /** @var mixed Payment Processor */
