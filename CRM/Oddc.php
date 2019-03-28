@@ -1,15 +1,20 @@
 <?php
 
 class CRM_Oddc {
+  const API_CUSTOM_FIELD_CAMPAIGN_FUNDING_TARGET = 'custom_67';
+  const API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD = 'custom_68';
   /** @var array Validated input */
   public $input;
 
-  /** @var array Hard coded map of payment processor ids until a better method in place.
-   * @todo Update payment processor map
-   */
+  /** @var array Hard coded map of payment processor ids until a better method in place.  */
   public $payment_processor_map = [
     'GoCardless' => [ 'company' => 'openDemocracy GoCardless Direct Debit', 'charity' => 'openTrust GoCardless Direct Debit' ],
     'PayPal'     => [ 'company' => 'openDemocracy PayPal'                 , 'charity' => 'openTrust PayPal' ]                 ,
+  ];
+  /** @var array Hard coded map of financial types.  */
+  public $financial_type_map = [
+    'charity' => 'Donation - openTrust',
+    'company' => 'Donation - openDemocracy',
   ];
 
   /** @var mixed Payment Processor */
@@ -49,7 +54,6 @@ class CRM_Oddc {
   public function validate($input) {
 
     // Leave $input as is, but clean it up into $params.
-    $params = ['financial_type_id' => 'Donation'];
     $params['is_recur'] = (!empty($input['is_recur'])) ? 1: 0;
 
     // Validate geo country name.
@@ -97,6 +101,9 @@ class CRM_Oddc {
     foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list'] as $_) {
       $params[$_] = $input[$_];
     }
+
+    // Set financial type based on legal entity.
+    $params['financial_type_id'] = $this->financial_type_map[$input['legal_entity']];
 
     // Source has come on query string, just check it does not have anything too weird in it.
     $params['source'] = preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#-]+/', '-', $input['source']);
@@ -147,8 +154,8 @@ class CRM_Oddc {
    */
   protected function processPayPal() {
 
-    // @todo set financial_type_id.
-    $params['financial_type_id'] = 'Donation';
+    // Copy financial_type_id set in validate()
+    $params['financial_type_id'] = $this->input['financial_type_id'];
 
     // Used a couple of times below.
     $payment_processor_config = $this->payment_processor->getPaymentProcessor();
@@ -165,7 +172,7 @@ class CRM_Oddc {
         'amount'                 => $this->input['amount'], // Nb. this is not correct if not actually paid in GBP but is required to match the numeric amount for PayPal webhooks.
         'financial_type_id'      => $this->input['financial_type_id'],
         'frequency_interval'     => 1,
-        'frequency_unit'         => "day", //"month", //@todo reset to month
+        'frequency_unit'         => "month", // Use "day" for testing.
         'campaign_id'            => $this->input['campaign'],
         'is_test'                => $this->input['test_mode'],
         'payment_instrument_id'  => $this->payment_processor->getPaymentInstrumentID(),
@@ -197,6 +204,15 @@ class CRM_Oddc {
     $this->setOdProjectParam($contrib_params);
 
     $contribution = civicrm_api3('Contribution', 'create', $contrib_params);
+    // Store the Contribution ID in session data so that the thank you page can send an email.
+    // The contribution ID is passed in as contributionID on the success return URL.
+    // By checking that the received contributionID is on this session var we can be sure that
+    // we are not about to start thanking a hacker who knows a contributionID.
+    if (!isset($_SESSION['oddc_paypal_contribs'])) {
+      $_SESSION['oddc_paypal_contribs'] = [];
+    }
+    // Store the input on the session - this helps us email the right email later.
+    $_SESSION['oddc_paypal_contribs'][$contribution['id']] = $this->input;
 
     // We can pass various parameters through as 'custom'. (max 256 chars) I think paypal sends these back at the end.
     $custom = ['module' => 'contribute', 'contactID' => $this->contact_id, 'contributionID' => $contribution['id']];
@@ -209,7 +225,7 @@ class CRM_Oddc {
     $paypalParams = [
       'business'           => $payment_processor_config['user_name'],
       'notify_url'         => $ipn_url,
-      'item_name'          => 'Donation',
+      'item_name'          => $this->input['financial_type_id'],
       'quantity'           => 1,
       'undefined_quantity' => 0, // Don't know what this is.
       'no_note'            => 1,
@@ -221,7 +237,7 @@ class CRM_Oddc {
       'charset'            => 'UTF-8',
       'custom'             => json_encode($custom),
       'bn'                 => 'CiviCRM_SP',
-      'return'             => $this->getUrlWithParams(['result' => 1]),
+      'return'             => $this->getUrlWithParams(['result' => 1, 'contributionID' => $contribution['id']]),
       'cancel_return'      => $this->input['return_url'],
     ];
 
@@ -231,7 +247,7 @@ class CRM_Oddc {
         'cmd' => '_xclick-subscriptions',
         'a3'  => $this->input['amount'],
         'p3'  => 1, //$params['frequency_interval'], // e.g. 1 with t3='M' means every (1) month
-        't3'  => 'D',// @todo set to M for month!
+        't3'  => 'M',// set to D for testing (daily)
         'sra' => 1, // retry failed payments (up to two more tries).
         'src' => 1, // subscription recurs.
         // I think not sending 'srt' might mean indefinite recurring payments.
@@ -285,7 +301,7 @@ class CRM_Oddc {
     $payment_processor_config = $this->payment_processor->getPaymentProcessor();
     $params = [
       'session_token'        => $token,
-      'description'          => 'Donation',
+      'description'          => $this->input['financial_type_id'],
       'success_redirect_url' => $this->getUrlWithParams(['gcrf' => 1]),
       'prefilled_customer' => [
         'given_name'    => $this->input['first_name'],
@@ -324,9 +340,9 @@ class CRM_Oddc {
    * Called from oddc__complete_redirect_url() which is called by Drupal's
    * preprocess node hook when gcrf is present on GET data.
    *
-   * @param array $input is query string data from GC.
+   * @param array $input is query string data from GC, plus the form config.
    */
-  public function completeRedirectFlow($input) {
+  public function completeGoCardlessRedirectFlow($input) {
 
     Civi::log()->info("Oddc::completeRedirectFlow. \nGET: {input}\n\nSESSION: {session}",
       ['input' => json_encode($input), 'session' => json_encode($_SESSION['odd_gcrf'], JSON_PRETTY_PRINT)]);
@@ -354,7 +370,8 @@ class CRM_Oddc {
     $subscription  = $result['subscription'];
 
     // Create a ContributionRecur record.
-    $financial_type_id = 'Donation';
+    // Set financial type based on legal entity.
+    $financial_type_id = $this->financial_type_map[$input['legal_entity']];
 
     $contrib_recur = civicrm_api3('ContributionRecur', 'create', array(
       'amount'                 => $params['amount'],
@@ -391,7 +408,14 @@ class CRM_Oddc {
     ];
     $this->setOdProjectParam($contrib_params);
     $this->setGiftAidParam($contrib_params);
-    $contrib_recur = civicrm_api3('Contribution', 'create', $contrib_params);
+    $contrib = civicrm_api3('Contribution', 'create', $contrib_params);
+
+    // Now we send thank you.
+    // Add in contributionID, contactID to input.
+    $this->input['contributionID'] = $contrib['id'];
+    $this->input['contactID'] = $this->contact_id;
+    $this->sendThankYouEmail($this->input);
+
   }
   /**
    * Find or create CiviCRM contact.
@@ -475,6 +499,152 @@ class CRM_Oddc {
         // Add the contact to the list.
         $contact_ids = [$this->contact_id];
         CRM_Contact_BAO_GroupContact::addContactsToGroup($contact_ids, $this->input['mailing_list']);
+      }
+    }
+  }
+  /**
+   * PayPal user clicked Return To Merchant after making payment.
+   */
+  public function completePayPal($input) {
+
+    Civi::log()->info(
+      "Oddc::completePayPal. \nGET: {input}\n\nSESSION: {session}",
+      [
+        'input'   => json_encode($input, JSON_PRETTY_PRINT),
+        'session' => json_encode($_SESSION['oddc_paypal_contribs'] ?? NULL, JSON_PRETTY_PRINT)
+      ]
+    );
+
+    // Unpack the 'custom' field
+    $custom = json_decode($input['custom'] ?? '', TRUE);
+    if (!$custom) {
+      Civi::log()->error("Oddc::completePayPal. No 'custom' data could be extracted. Will not send email.", []);
+      return;
+    }
+    // Move contents into our input.
+    $input += $custom;
+
+    // We require that the contribution ID matches one on session.
+    if (empty($input['contributionID']) || empty($_SESSION['oddc_paypal_contribs'][$input['contributionID']])) {
+      Civi::log()->error("Oddc::completePayPal. Input contributionID not found on session. Will not send email.", []);
+      return;
+    }
+
+    // Load the email from the session data.
+    $input['email'] = $_SESSION['oddc_paypal_contribs'][$input['contributionID']]['email'] ?? '';
+
+    $this->sendThankYouEmail($input);
+
+    // Clean up session data a bit as it is no longer needed.
+    unset($_SESSION['oddc_paypal_contribs'][$input['contributionID']]);
+  }
+  /**
+   * Send thank you email.
+   *
+   * Minimum input keys are:
+   * - contactID
+   * - contributionID
+   * - thanks_message_template_id
+   * - email - email address to send to.
+   *
+   * @param array $input
+   */
+  public function sendThankYouEmail($input) {
+
+    Civi::log()->info("Oddc::sendThankYouEmail. input is", ['input' => json_encode($input, JSON_PRETTY_PRINT)]);
+    // Check for an optional configured thank you message.
+    if (!(((int) $input['thanks_message_template_id'] ?? 0)>0)) {
+      Civi::log()->info("Oddc::sendThankYouEmail. No thanks_message_template_id '$input[thanks_message_template_id]'. Will not send email.", []);
+      return;
+    }
+
+    if (!(CRM_Utils_Rule::positiveInteger($input['contactID'] ?? 0))) {
+      Civi::log()->info("Oddc::sendThankYouEmail. No contactID '$input[contactID]'. Will not send email.", []);
+      return;
+    }
+
+    if (!(CRM_Utils_Rule::email($input['email'] ?? ''))) {
+      Civi::log()->info("Oddc::sendThankYouEmail. Missing/invalid email '$input[email]'. Will not send email.", []);
+      return;
+    }
+
+    // Prepare extra vars for the smarty template.
+    $template_params = [];
+
+    // Load the contribution.
+    require_once 'CRM/Core/BAO/CustomField.php';
+    $gift_aid_custom_field = 'custom_' . CRM_Core_BAO_CustomField::getCustomFieldID('Eligible_for_Gift_Aid', 'Gift_Aid');
+    $contribution = civicrm_api3('Contribution', 'getsingle', ['id' => $input['contributionID'], 'return' => ['total_amount', 'contribution_recur_id', 'note', 'financial_type_id', $gift_aid_custom_field]]);
+
+    // Calculate description.
+    $note = civicrm_api3('Note', 'get', [
+      'sequential' => 1,
+      'entity_table' => "civicrm_contribution",
+      'entity_id' => $input['contributionID'],
+    ]);
+    Civi::log()->info("Note:", $note);
+		if (preg_match('/^Payment made as ([A-Z]{3})(\d[.0-9]*), taken in GBP/', ($note['values'][0]['note'] ?? ''), $matches)) {
+      // Was made in foreign currency.
+      $template_params['donation_description'] = $matches[1] . number_format($matches[2], 2) . ' (taken in GBP)';
+		}
+    else {
+      // GPB
+      $template_params['donation_description'] = "£" . number_format($contribution['total_amount'], 2);
+    }
+
+    if (($contribution['contribution_recur_id'] ?? 0) > 0) {
+      // Recurring. At the moment it means monthly.
+      $template_params['donation_description'] .= " monthly donation";
+    }
+    else {
+      // One off.
+      $template_params['donation_description'] .= " donation";
+    }
+
+    // Legal entity. Default to openDemocracy
+    $template_params['legal_entity'] = 'openDemocracy';
+    $financial_type_name = civicrm_api3('FinancialType', 'getvalue', ['return' => "name", 'id' => $contribution['financial_type_id']]);
+    if ($financial_type_name === 'Donation - openTrust') {
+      $template_params['legal_entity'] = 'openTrust';
+    }
+
+    // Gift Aid
+    $template_params['gift_aid'] = '';
+    if (($contribution[$gift_aid_custom_field] ?? '') == 1) {
+      $template_params['gift_aid'] = 'Gift Aid will be claimed on this contribution.';
+    }
+
+    $from = CRM_Core_BAO_Domain::getNameAndEmail();
+    $params = [
+      'id'              => (int) $input['thanks_message_template_id'],
+      'contact_id'      => (int) $input['contactID'],
+      'template_params' => $template_params,
+      'from'            => $from[1],
+      'to_email'        => $input['email'],
+      'to_name'         => civicrm_api3('Contact', 'getvalue', ['return' => 'display_name', 'id' => $input['contactID']]),
+    ];
+    Civi::log()->info("Oddc::sendThankYouEmail. Sending:", $params);
+
+    $result = civicrm_api3('MessageTemplate', 'send', $params);
+    Civi::log()->info("Oddc::sendThankYouEmail. Sent email.", ['result' => $result]);
+    return $result;
+  }
+  /**
+   * Update total received on campaign targets.
+   */
+  public function updateCampaignTargetStats() {
+    // Load campaigns.
+    $campaigns = civicrm_api3('Campaign', 'get', ['return' =>  ["id", self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD]]);
+    // Load stats.
+    $totals_raised = CRM_Core_DAO::executeQuery('SELECT campaign_id, SUM(net_amount) raised FROM civicrm_contribution WHERE campaign_id IS NOT NULL AND contribution_status_id=1 AND is_test = 0 GROUP BY campaign_id')
+      ->fetchMap('campaign_id', 'raised');
+    foreach ($campaigns['values'] as $campaign_id => $details) {
+      $raised = (int) round($totals_raised[$campaign_id] ?? 0);
+      if (!isset($details[self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD])
+        || $details[self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD] != $raised) {
+        // Need to update total.
+        $result = civicrm_api3('Campaign', 'create', ["id" => $campaign_id, self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD => $raised]);
+        Civi::log()->info("Updated campaign $campaign_id with total " . self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD . " = " . $raised);
       }
     }
   }

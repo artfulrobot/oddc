@@ -218,6 +218,16 @@ function oddc_civicrm_entityTypes(&$entityTypes) {
   _oddc_civix_civicrm_entityTypes($entityTypes);
 }
 
+/**
+ * Uses hook_civicrm_post to update campaign targets after saving a contribution.
+ */
+function oddc_civicrm_post($op, $objectName, $objectId, &$objectRef) {
+  if ($op === 'view' || $objectName !== 'Contribution') {
+    return;
+  }
+  // Contribution has been changed. Update the stats.
+  CRM_Oddc::factory()->updateCampaignTargetStats();
+}
 
 /**
  *
@@ -233,8 +243,17 @@ function oddc__get_redirect_url($input) {
  * User has set up mandate at GC, complete this process and set up subscription.
  *
  */
-function oddc__complete_redirect_url($input) {
-  return CRM_Oddc::factory()->completeRedirectFlow($input);
+function oddc__complete_go_cardless_redirect_url($input) {
+  return CRM_Oddc::factory()->completeGoCardlessRedirectFlow($input);
+}
+/**
+ * User has successfully made a payment and clicked Return To Merchant on the
+ * PayPal page.
+ *
+ * @input array $input (POST data)
+ */
+function oddc__complete_paypal($input) {
+  return CRM_Oddc::factory()->completePayPal($input);
 }
 /**
  * Augment the app config array with details loaded from a contact's record, if
@@ -270,6 +289,20 @@ function oddc__add_contact_data_from_checksum(&$odd_app_config, $cid, $cs) {
     }
   }
 }
+/** Augment the app config array with details loaded campaign funding. 
+ *
+ * @param Array $odd_app_config
+ * @param String $campaign_name
+ */
+function oddc__add_campaign_funding_data(&$odd_app_config, $campaign_name) {
+  $result = civicrm_api3('Campaign', 'get', [
+    'sequential' => 1,
+    'return'     => [CRM_Oddc::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_TARGET, CRM_Oddc::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD],
+    'name'       => $campaign_name,
+  ]);
+  $odd_app_config['campaign_target'] = (int) ($result['values'][0][CRM_Oddc::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_TARGET] ?? 0);
+  $odd_app_config['campaign_total']  = (int) ($result['values'][0][CRM_Oddc::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD] ?? 0);
+}
 /**
  * Return a map of countries.
  */
@@ -280,4 +313,59 @@ function oddc__get_country_list() {
     $list[$_['iso_code']] = $_['name'];
   }
   return $list;
+}
+/**
+ * Implements hook_civicrm_alterMailParams
+ *
+ * Used to abort sending payment receipt for odd Donation Pages.
+ *
+ * $params['abortMailSend'] = TRUE;
+ *
+ * @param array &$params
+ * @param array $context
+ */
+function oddc_civicrm_alterMailParams(&$params, $context) {
+
+  if ( ($params['groupName'] ?? '') === 'msg_tpl_workflow_contribution'
+    && ($params['valueName'] ?? '') === 'contribution_online_receipt'
+    && CRM_Utils_Rule::positiveInteger($params['tplParams']['contributionID'] ?? 0)
+  ) {
+
+    // Civi::log()->debug("alterMailParams", ['params' => $params, 'context' => $context]);
+
+    // OK, looks like one we want to stop.
+    // Stop it IF it's the first contribution of a recurring one, or it's a one off.
+    // We also need to watch out for old style contribution forms which we should leave alone.
+    $contribution = civicrm_api3('Contribution', 'getsingle', [
+      'return' => ['contribution_page_id', 'contribution_recur_id', 'receive_date'],
+      'id'     => $params['tplParams']['contributionID'],
+    ]);
+
+    if (!empty($contribution['contribution_page_id'])) {
+      // Old style contribution page, leave it alone.
+      //Civi::log()->notice(__FUNCTION__ . ' Not altering: belongs to a contribution page.', []);
+      return;
+    }
+
+    if (!empty($contribution['contribution_recur_id'])) {
+      // OK this is a recurring contribution. Is it the first one?
+      // it is first, if there are no other contributions before this.
+      $count = civicrm_api3('Contribution', 'getcount',  [
+        'receive_date'          => ['<' => $contribution['receive_date']],
+        'contribution_recur_id' => $contribution['contribution_recur_id'],
+      ]);
+      if ($count) {
+        // This is not the first, leave it alone.
+        // Civi::log()->notice(__FUNCTION__ . ' Not altering: is a repeat recurring donation.', ['count' => $count]);
+        return;
+      }
+    }
+
+    // OK, do not send.
+    Civi::log()->notice(__FUNCTION__ . ' Aborting mail - think it was triggered from a Donation Page which will send it\'s own');
+    $params['abortMailSend'] = TRUE;
+  }
+  else {
+    // Civi::log()->notice(__FUNCTION__ . ' Not altering: not msg_tpl_workflow_contribution and contribution_online_receipt or no contributionID', []);
+  }
 }
