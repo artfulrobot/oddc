@@ -210,7 +210,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
     // IF $name is a mailing.
     if (isset($mailing_ids[$name]) && isset($mailings[$mailing_ids[$name]])) {
       // This is a mailing and we have been able to load it's name.
-      $mailing_id = $mailing_ids[$name];
+      $mailing_id = (int) $mailing_ids[$name];
       $mailing = $mailings[$mailing_id];
       // Make the name a bit nicer.
       $result['sources'][$idx] = [
@@ -221,6 +221,17 @@ function civicrm_api3_contribution_Getoddstats($params) {
       if (!empty($stats['values'][$mailing_id])) {
         $result['sources'][$idx] += $stats['values'][$mailing_id];
       }
+
+      $result['sources'][$idx]['unique_opens'] =
+        CRM_Core_DAO::executeQuery("SELECT count(distinct q.contact_id)
+          FROM civicrm_mailing_event_opened o
+          INNER JOIN  civicrm_mailing_event_queue q ON o.event_queue_id = q.id
+          INNER JOIN civicrm_mailing_job j ON q.job_id = j.id
+          WHERE j.mailing_id = $mailing_id;")->fetchValue();
+
+      // Replace CiviCRM's opened_rate which is not unique opens and therefore pretty useless.
+      $result['sources'][$idx]['opened_rate'] = number_format(100 * $result['sources'][$idx]['unique_opens'] / $result['sources'][$idx]['Delivered'], 2) . '%';
+
     }
     else {
       // Not a mailing, just output the source name as is.
