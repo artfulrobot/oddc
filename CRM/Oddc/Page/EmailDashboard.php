@@ -11,6 +11,8 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
   protected $date_range_type = '';
   protected $date_range_start = '';
   protected $date_range_end = '';
+  /** getCurrentTotalUniqueSubscribers cache */
+  protected $total_unique;
 
   public function run() {
     // Example: Set the page-title dynamically; alternatively, declare a static title in xml/Menu/*.xml
@@ -39,7 +41,8 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       $this->date_range_end = $a;
     }
 
-    $this->assign('currentTotalUniqueSubscribers', $this->getCurrentTotalUniqueSubscribers());
+    $this->total_unique = $this->getCurrentTotalUniqueSubscribers();
+    $this->assign('currentTotalUniqueSubscribers', number_format($this->total_unique));
     $this->assign('activeSubscribers', $this->getActiveSubscribers());
     $this->assign('selectedListCounts', $this->getSelectedListCounts());
     $this->assign('allLists', $this->getAllMailingLists());
@@ -90,7 +93,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
         SELECT id FROM civicrm_contact WHERE is_deleted = 1);";
 
     $unique_contacts = (int) CRM_Core_DAO::executeQuery($sql)->fetchValue();
-    return number_format($unique_contacts);
+    return $unique_contacts;
   }
 
   /**
@@ -104,9 +107,11 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     $groups = $this->getAllMailingLists();
 
     foreach ($this->getSelectedLists() as $group_id) {
+      $_ = CRM_Contact_BAO_Group::memberCount($group_id);
       $selected_lists[$group_id] = [
-        'title' => $groups[$group_id]['title'],
-        'count' => CRM_Contact_BAO_Group::memberCount($group_id),
+        'title'   => $groups[$group_id]['title'],
+        'count'   => $_,
+        'percent' => number_format(100*$_/$this->total_unique, 1) . '%',
       ];
     }
 

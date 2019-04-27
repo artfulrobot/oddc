@@ -32,11 +32,13 @@
 
 <table id="subscribers-by-list">
   <thead>
-    <tr><th>List</th><th>Subscribers</th></tr>
+    <tr><th>List</th><th>Subscribers</th>
+    <th>% total subscribers</th>
+    </tr>
   </thead>
   <tbody>
   {foreach from=$selectedListCounts as key="group_id" item="row"}
-    <tr> <td>{$row.title}</td> <td>{$row.count}</td> </tr>
+    <tr> <td>{$row.title}</td> <td>{$row.count}</td><td>{$row.percent}</td> </tr>
   {/foreach}
   </tbody>
 </table>
