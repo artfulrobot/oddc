@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<menu>
+  <item>
+    <path>civicrm/dashboard/email</path>
+    <page_callback>CRM_Oddc_Page_EmailDashboard</page_callback>
+    <title>EmailDashboard</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
+</menu>

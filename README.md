@@ -15,3 +15,13 @@
 - **Project**
 
    This is a string and is stored on a custom field on contributions.
+
+## Email Dashboard
+
+### Configuration.
+
+Stored as a JSON blob with key `oddc_dashboards`. IT looks like this:
+
+    {
+        mailingLists: [123, 456, 789], // group IDs to show in dash.
+    }
