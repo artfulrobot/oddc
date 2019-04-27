@@ -4,9 +4,31 @@
 }
 </style>{/literal}
 <h2>Subscribers</h2>
+<!-- date range selectors -->
+<form method="get">
+  <select id="date_range_type" name="date_range_type" >
+    <option value="last_6_months" {if $date_range_type == 'last_6_months'}selected{/if} >Last 6 months</option>
+    <option value="last_3_months" {if $date_range_type == 'last_3_months'}selected{/if} >Last 3 months</option>
+    <option value="between" {if $date_range_type == 'between'}selected{/if} >Between</option>
+  </select>
+
+  <div id="date_range_between" {if $date_range_type != 'between'} style="display:none;"{/if}>
+    <span><input name="date_range_start" value="{$date_range_start}"/></span> and
+    <span><input name="date_range_end" value="{$date_range_end}"/></span>
+  </div>
+
+  <input type="submit" value="Update" />
+</form>
+
+<!-- /date range selectors -->
 <p class="bigstat">
   <span class="bigstat__stat">{$currentTotalUniqueSubscribers}</span> people subscribed.
 </p>
+<p class="bigstat">
+  <span class="bigstat__stat">{$activeSubscribers}</span> active subscribers.
+</p>
+
+
 
 <table id="subscribers-by-list">
   <thead>
@@ -18,6 +40,8 @@
   {/foreach}
   </tbody>
 </table>
+
+<!--  Form for editing selected mailing lists -->
 <div style="background:white;padding:1rem;">
   <a href id="toggleListEdit" >Edit lists</a>
   <span id="reloadForListChanges" style="display:none"> | <a  href='?'>Reload page to show changes</a></span>
@@ -29,6 +53,7 @@
   {/foreach}
   </form>
 </div>
+<!-- /Form for editing selected mailing lists -->
 
 
 <p>The current time is {$currentTime}</p>
@@ -68,6 +93,21 @@ CRM.$(() => {
           CRM.status('Saved');
         }
       });
+  });
+
+  const $dateRangeBetween = CRM.$('#date_range_between');
+  const updateDateRangeUi = function updateDateRangeUi() {
+    if ($dateRangeType.val() == 'between') {
+      $dateRangeBetween.fadeIn('fast');
+    }
+    else {
+      $dateRangeBetween.fadeOut('fast');
+    }
+  }
+  const $dateRangeType = CRM.$('#date_range_type').on('change', updateDateRangeUi);
+  updateDateRangeUi();
+  CRM.$('input[name="date_range_start"], input[name="date_range_end"]').datepicker({
+    dateFormat: 'd M yy'
   });
 
 });

@@ -7,6 +7,11 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
   protected $all_lists;
   protected $selected_list_ids;
 
+  /** From  GET */
+  protected $date_range_type = '';
+  protected $date_range_start = '';
+  protected $date_range_end = '';
+
   public function run() {
     // Example: Set the page-title dynamically; alternatively, declare a static title in xml/Menu/*.xml
     CRM_Utils_System::setTitle(E::ts('EmailDashboard'));
@@ -14,13 +19,61 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     // Example: Assign a variable for use in a template
     //$this->assign('currentTime', date('Y-m-d H:i:s'));
 
+    // Params on GET data.
+    $this->date_range_type = $_GET['date_range_type'] ?? 'last_6_months';
+    function parseDate($d) {
+      if ($d) {
+        $t = strtotime($d);
+        if ($t!==FALSE) {
+          return date('Y-m-d', $t);
+        }
+      }
+      return '';
+    }
+    $this->date_range_start = parseDate($_GET['date_range_start'] ?? '');
+    $this->date_range_end = parseDate($_GET['date_range_end'] ?? '');
+    if ($this->date_range_start && $this->date_range_end && $this->date_range_end < $this->date_range_start) {
+      // Swap dates.
+      $a = $this->date_range_start;
+      $this->date_range_start = $this->date_range_end;
+      $this->date_range_end = $a;
+    }
 
     $this->assign('currentTotalUniqueSubscribers', $this->getCurrentTotalUniqueSubscribers());
+    $this->assign('activeSubscribers', $this->getActiveSubscribers());
     $this->assign('selectedListCounts', $this->getSelectedListCounts());
     $this->assign('allLists', $this->getAllMailingLists());
+    $this->assign('date_range_type', $this->date_range_type);
+    $this->assign('date_range_start', $this->date_range_start ? date('j M Y', strtotime($this->date_range_start)) : '');
+    $this->assign('date_range_end', $this->date_range_end ? date('j M Y', strtotime($this->date_range_end)) : '');
 
     parent::run();
   }
+  /**
+   * Count unique non-deleted contacts in selected mailing lists who have opened something in last 6 months...
+   *
+   * @return int
+   */
+  public function getActiveSubscribers() {
+    $selected_list_ids = implode(',', $this->getSelectedLists());
+    if (!$selected_list_ids) {
+      return 0;
+    }
+
+    $sql = "SELECT COUNT(distinct gc.contact_id) FROM civicrm_group_contact gc
+      WHERE gc.group_id IN ($selected_list_ids) AND status = 'Added'
+        AND gc.contact_id NOT IN (SELECT id FROM civicrm_contact WHERE is_deleted = 1)
+        AND gc.contact_id IN (
+          SELECT DISTINCT eq.contact_id
+          FROM civicrm_mailing_event_opened eo
+          INNER JOIN civicrm_mailing_event_queue eq ON eo.event_queue_id = eq.id
+          WHERE eo.time_stamp > NOW() - INTERVAL 6 MONTH
+        );";
+
+    $unique_contacts = (int) CRM_Core_DAO::executeQuery($sql)->fetchValue();
+    return number_format($unique_contacts);
+  }
+
   /**
    * Count unique non-deleted contacts in selected mailing lists.
    *
