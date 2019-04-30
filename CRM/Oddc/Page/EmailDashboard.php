@@ -11,7 +11,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
   protected $date_range_type = '';
   protected $date_range_start = '';
   protected $date_range_end = '';
-  /** getCurrentTotalUniqueSubscribers cache */
+  /** comes from getSubscribersByNumberOfSubscriptions */
   protected $total_unique;
 
   public function run() {
@@ -57,8 +57,9 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       break;
     }
 
-    $this->total_unique = $this->getCurrentTotalUniqueSubscribers();
+    $subscriptions = $this->getSubscribersByNumberOfSubscriptions();
     $this->assign('currentTotalUniqueSubscribers', number_format($this->total_unique));
+    $this->assign('subscribersByListCount', $subscriptions);
     $active = $this->getActiveSubscribers();
     $this->assign('activeSubscribers', number_format($active));
     $this->assign('activeSubscribersPc', number_format($active*100/$this->total_unique, 1));
@@ -103,18 +104,34 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
    *
    * @return int
    */
-  public function getCurrentTotalUniqueSubscribers() {
+  public function getSubscribersByNumberOfSubscriptions() {
     $selected_list_ids = implode(',', $this->getSelectedLists());
     if (!$selected_list_ids) {
       return 0;
     }
 
-    $sql = "SELECT COUNT(distinct gc.contact_id) FROM civicrm_group_contact gc
-      WHERE gc.group_id IN ($selected_list_ids) AND status = 'Added' AND gc.contact_id NOT IN (
-        SELECT id FROM civicrm_contact WHERE is_deleted = 1);";
-
-    $unique_contacts = (int) CRM_Core_DAO::executeQuery($sql)->fetchValue();
-    return $unique_contacts;
+    $sql = "SELECT groups, COUNT(contact_id) contacts
+      FROM (
+        SELECT gc.contact_id, COUNT(distinct gc.group_id) groups
+        FROM civicrm_group_contact gc
+        WHERE gc.group_id IN ($selected_list_ids)
+              AND status = 'Added'
+              AND gc.contact_id NOT IN (
+                SELECT id FROM civicrm_contact WHERE is_deleted = 1)
+        GROUP BY contact_id
+        ) d
+        GROUP BY groups
+        ORDER BY groups
+    ;";
+    $subscriptions = CRM_Core_DAO::executeQuery($sql)->fetchAll();
+    $total = 0;
+    foreach ($subscriptions as &$_) {
+      $total += $_['contacts'];
+      $_['contacts'] = number_format($_['contacts'], 0);
+    }
+    $subscriptions[] = ['groups' => 'Total', 'contacts' => number_format($total, 0)];
+    $this->total_unique = $total;
+    return $subscriptions;
   }
 
   /**
@@ -179,7 +196,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       $mailings[$stats_dao->mailing_id]['delivered'] = $stats_dao->delivered ? $stats_dao->delivered : 0;
       $mailings[$stats_dao->mailing_id]['opened_rate'] = empty($stats_dao->delivered)
         ? ''
-        : number_format($stats_dao->opened * 100 / $stats_dao->delivered, 2);
+        : number_format($stats_dao->opened * 100 / $stats_dao->delivered, 1);
     }
     $stats_dao->free();
 
@@ -238,16 +255,36 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
             'opened_rate'    => 0,
             'one_off_people' => 0,
             'one_off_amount' => 0,
+            'one_off_cr'     => 0,
             'regular_people' => 0,
             'regular_amount' => 0,
-            'total_people' => 0,
-            'total_amount' => 0,
+            'regular_cr'     => 0,
+            'total_people'   => 0,
+            'total_amount'   => 0,
+            'total_cr'       => 0,
           ];
     foreach ($mailings as &$mailing) {
-      foreach (array_keys($maxes) as $_) {
-        if ($_ !== 'opened_rate') {
-          $mailing[$_] = round($mailing[$_]);
+
+      // Convert _people ones into a conversion %age for the _cr ones.
+      if ($mailing['opened'] > 0) {
+        $convert_to_rate = 100 / $mailing['opened'];
+        foreach (['one_off_', 'regular_', 'total_'] as $_) {
+          $mailing[$_ . 'cr'] = number_format($mailing[$_ . 'people'] * $convert_to_rate, 1);
         }
+      }
+      else {
+        foreach (['one_off_cr', 'regular_cr', 'total_cr'] as $_) {
+          $mailing[$_] = '';
+        }
+      }
+
+      // Round £ to integers.
+      foreach (['one_off_amount', 'regular_amount', 'total_amount'] as $_) {
+        $mailing[$_] = round($mailing[$_]);
+      }
+
+      // Calculate maximums.
+      foreach (array_keys($maxes) as $_) {
         if ($maxes[$_] < $mailing[$_]) {
           $maxes[$_] = $mailing[$_];
         }
@@ -255,6 +292,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     }
     // Actually it's simpler than this.
     $maxes['one_off_people'] = $maxes['regular_people'] = $maxes['total_people'];
+    $maxes['one_off_cr'] = $maxes['regular_cr'] = $maxes['total_cr'];
     $maxes['one_off_amount'] = $maxes['regular_amount'] = $maxes['total_amount'];
 
     return ['mailings' => $mailings, 'maxes' => $maxes];
@@ -298,10 +336,13 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
             'opened_rate'    => '',
             'one_off_people' => 0,
             'one_off_amount' => 0,
+            'one_off_cr'     => 0,
             'regular_people' => 0,
             'regular_amount' => 0,
-            'total_people' => 0,
-            'total_amount' => 0,
+            'regular_cr'     => 0,
+            'total_people'   => 0,
+            'total_amount'   => 0,
+            'total_cr'       => 0,
           ];
       }
     }
@@ -335,6 +376,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
         'group_type' => "Mailing List",
         'is_active'  => 1,
         'is_hidden'  => 0,
+        'options'    => ['limit' => 0],
       ]);
       $this->all_lists = [];
       foreach ($result['values'] as $id => $_) {

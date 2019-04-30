@@ -47,8 +47,11 @@
   background: #BBE4FC; /* a light brand-hue blue */
 }
 .oddc-cellbarchart__text {
-  position: relative;// to lift above absolute.
+  position: relative;/* to lift above absolute. */
   padding:0 2px;
+}
+.crm-container table.dataTable td.oddc-subtotal {
+  background: #f8f5f5 !important; /* ← needed to override CiviCRM style.*/
 }
 </style>{/literal}
 
@@ -66,6 +69,12 @@
   <p class="bigstat">
     <span class="bigstat__stat">{$activeSubscribersPc}%</span> active subscribers.
   </p>
+  <table>
+    <tr><th>Groups</th><th>Contacts</th></tr>
+    {foreach from=$subscribersByListCount item="row"}
+      <tr><td>{$row.groups}</td><td>{$row.contacts}</td></tr>
+    {/foreach}
+  </table>
 </div>
 <div class="oddc-layout__lists">
 <h2>Mailing Groups</h2>
@@ -122,24 +131,33 @@
   <tr>
     <th>Mailing</th>
     <th>Date</th>
-    <th>Open Rate</th>
-    <th>Donors (one off)</th>
-    <th>Donors (new regular)</th>
-    <th>Donors (total)</th>
-    <th>£amount (one off)</th>
-    <th>£amount (new regular)</th>
-    <th>£amount (total)</th>
+    <th>Open %</th>
+    <th>CR% O</th>
+    <th>CR% R</th>
+    <th>CR%</th>
+    <th># O</th>
+    <th># R</th>
+    <th>#</th>
+    <th>£ O</th>
+    <th>£ R</th>
+    <th>£</th>
   </tr>
   </thead>
   <tbody>
     {foreach from=$mailings item="mailing" key="id"}
       <tr>
-        <td>{$mailing.name}</td>
-        <td>{$mailing.scheduled_date|truncate:16:"":true:true}</td>
+        <td><a href="/civicrm/mailing/report?mid={$mailing.id}&amp;reset=1">{$mailing.name}</a></td>
+        <td>{$mailing.scheduled_date|truncate:16:"":true:false}</td>
         <td>{$mailing.opened_rate}</td>
+
+        <td>{$mailing.one_off_cr}</td>
+        <td>{$mailing.regular_cr}</td>
+        <td>{$mailing.total_cr}</td>
+
         <td>{$mailing.one_off_people}</td>
         <td>{$mailing.regular_people}</td>
         <td>{$mailing.total_people}</td>
+
         <td>{$mailing.one_off_amount}</td>
         <td>{$mailing.regular_amount}</td>
         <td>{$mailing.total_amount}</td>
@@ -147,6 +165,16 @@
     {/foreach}
     </tbody>
   </table>
+  <p>Key:</p>
+  <ul>
+    <li><em>CR%</em> Conversion Rate: (people who donated) / (people who opened) × 100%</li>
+    <li><em>#</em> Number of donors</li>
+    <li><em>£</em> Amount (net)</li>
+    <li><em>O</em> One-off (single) donation</li>
+    <li><em>R</em> a new Regular donation - Nb. for Amount columns, this value is ×12 to indicate its worth over a year.</li>
+    <li><em>without O or R</em> total</li>
+  </ul>
+  
 </div>
 <!-- /Main mailing stats table -->
 </div>
@@ -160,6 +188,9 @@ CRM.$(() => {
     null,
     null,
     maxes['opened_rate'],
+    maxes['one_off_cr'],
+    maxes['regular_cr'],
+    maxes['total_cr'],
     maxes['one_off_people'],
     maxes['regular_people'],
     maxes['total_people'],
@@ -194,14 +225,18 @@ CRM.$(() => {
   CRM.$('#mailing-stats').dataTable({
     pageLength: 25,
     columnDefs: [
-      { targets: 1, className: 'dt-right', },
-      { targets: 2, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 3, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 4, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 5, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 6, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 7, width:'7%', className: 'dt-right',render: backgroundBarchart },
-      { targets: 8, width:'7%', className: 'dt-right',render: backgroundBarchart }
+      { targets: 0, width:'22%' },
+      { targets: 1, width:'8%', className: 'dt-right', }, // date
+      { targets: 2,  width:'7%', className: 'dt-right',render: backgroundBarchart }, // open %
+      { targets: 3,  width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart }, //CR %O
+      { targets: 4,  width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart }, // CR %R
+      { targets: 5,  width:'7%', className: 'dt-right',render: backgroundBarchart },
+      { targets: 6,  width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart },
+      { targets: 7,  width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart },
+      { targets: 8,  width:'7%', className: 'dt-right',render: backgroundBarchart },
+      { targets: 9,  width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart },
+      { targets: 10, width:'7%', className: 'dt-right oddc-subtotal',render: backgroundBarchart },
+      { targets: 11, width:'7%', className: 'dt-right',render: backgroundBarchart }
     ],
     order: [[1, 'desc']]
   });
