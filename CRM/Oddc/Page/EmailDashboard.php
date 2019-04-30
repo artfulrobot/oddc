@@ -22,6 +22,8 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     //$this->assign('currentTime', date('Y-m-d H:i:s'));
 
     // Params on GET data.
+
+    // Store date_range_type and calculate/parse the actual date range to be used.
     $this->date_range_type = $_GET['date_range_type'] ?? 'last_6_months';
     function parseDate($d) {
       if ($d) {
@@ -32,23 +34,42 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       }
       return '';
     }
-    $this->date_range_start = parseDate($_GET['date_range_start'] ?? '');
-    $this->date_range_end = parseDate($_GET['date_range_end'] ?? '');
-    if ($this->date_range_start && $this->date_range_end && $this->date_range_end < $this->date_range_start) {
-      // Swap dates.
-      $a = $this->date_range_start;
-      $this->date_range_start = $this->date_range_end;
-      $this->date_range_end = $a;
+    switch ($this->date_range_type) {
+    case 'last_3_months':
+      $this->date_range_start = date('Y-m-d', strtotime('today - 3 months'));
+      $this->date_range_end = date('Y-m-d');
+      break;
+    case 'between':
+      // User-specified dates apply.
+      $this->date_range_start = parseDate($_GET['date_range_start'] ?? '');
+      $this->date_range_end = parseDate($_GET['date_range_end'] ?? '');
+      if ($this->date_range_start && $this->date_range_end && $this->date_range_end < $this->date_range_start) {
+        // Swap dates.
+        $a = $this->date_range_start;
+        $this->date_range_start = $this->date_range_end;
+        $this->date_range_end = $a;
+      }
+    case 'last_6_months':
+    default:
+      $this->date_range_type = 'last_6_months'; // Clarify this if something else had been set.
+      $this->date_range_start = date('Y-m-d', strtotime('today - 6 months'));
+      $this->date_range_end = date('Y-m-d');
+      break;
     }
 
     $this->total_unique = $this->getCurrentTotalUniqueSubscribers();
     $this->assign('currentTotalUniqueSubscribers', number_format($this->total_unique));
-    $this->assign('activeSubscribers', $this->getActiveSubscribers());
+    $active = $this->getActiveSubscribers();
+    $this->assign('activeSubscribers', number_format($active));
+    $this->assign('activeSubscribersPc', number_format($active*100/$this->total_unique, 1));
     $this->assign('selectedListCounts', $this->getSelectedListCounts());
     $this->assign('allLists', $this->getAllMailingLists());
     $this->assign('date_range_type', $this->date_range_type);
     $this->assign('date_range_start', $this->date_range_start ? date('j M Y', strtotime($this->date_range_start)) : '');
     $this->assign('date_range_end', $this->date_range_end ? date('j M Y', strtotime($this->date_range_end)) : '');
+    $data = $this->getMailingsData();
+    $this->assign('mailings', $data['mailings']);
+    $this->assign('mailingsMaxes', json_encode($data['maxes']));
 
     parent::run();
   }
@@ -74,7 +95,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
         );";
 
     $unique_contacts = (int) CRM_Core_DAO::executeQuery($sql)->fetchValue();
-    return number_format($unique_contacts);
+    return $unique_contacts;
   }
 
   /**
@@ -118,6 +139,175 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     return $selected_lists;
   }
 
+  /**
+   * Get data for mailings table:
+   *
+   * - Find all mailings within the date boundaries.
+   *
+   * - Conversion rate is defined as:
+   *   (unique people who made donation) / (total who opened email) × 100%
+   *
+   * - Conversion rate is needed for one off and regular, and then those added
+   *   to give total.
+   *
+   * - "made donation" is a Completed Contribution.
+   *
+   * - Also need net amount totals for the above.
+   */
+  public function getMailingsData() {
+    $mailings = $this->getMailingsInDateRange();
+
+    // Don't use CiviCRM's opened_rate from mail stats api which is not unique opens and therefore pretty useless.
+    $mailing_ids = implode(',', array_keys($mailings));
+    $stats_dao = CRM_Core_DAO::executeQuery(
+      "SELECT j.mailing_id, COUNT(DISTINCT q.contact_id) opened, (
+        SELECT COUNT(md.id)
+        FROM civicrm_mailing_event_delivered md
+        INNER JOIN civicrm_mailing_event_queue mdq ON md.event_queue_id = mdq.id
+        INNER JOIN civicrm_mailing_job mdj ON mdq.job_id = mdj.id
+        WHERE mdj.mailing_id = j.mailing_id
+      ) AS delivered
+      FROM civicrm_mailing_event_opened o
+      INNER JOIN civicrm_mailing_event_queue q ON o.event_queue_id = q.id
+      INNER JOIN civicrm_mailing_job j ON q.job_id = j.id
+      WHERE j.mailing_id IN ($mailing_ids)
+      GROUP BY j.mailing_id
+      ;");
+
+    while ($stats_dao->fetch()) {
+      $mailings[$stats_dao->mailing_id]['opened'] = $stats_dao->opened ? $stats_dao->opened : 0;
+      $mailings[$stats_dao->mailing_id]['delivered'] = $stats_dao->delivered ? $stats_dao->delivered : 0;
+      $mailings[$stats_dao->mailing_id]['opened_rate'] = empty($stats_dao->delivered)
+        ? ''
+        : number_format($stats_dao->opened * 100 / $stats_dao->delivered, 2);
+    }
+    $stats_dao->free();
+
+
+    // Now add in conversion rates.
+    $sql_params = [];
+    $sql = "SELECT
+        source,
+        IF(cc.contribution_recur_id IS NULL,
+          'one-off',
+          IF (EXISTS (
+              SELECT id FROM civicrm_contribution cc_first
+              WHERE cc.contribution_recur_id = cc_first.contribution_recur_id
+                AND cc_first.id < cc.id
+            ),
+          'repeat',
+          'first'
+          )) recur,
+        SUM(net_amount) amount,
+        COUNT(DISTINCT cc.contact_id) contributors
+      FROM civicrm_contribution cc
+      WHERE is_test = 0 AND source REGEXP '^mailing[0-9]+'
+      GROUP BY source, recur
+    ";
+    $stats_dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
+    while ($stats_dao->fetch()) {
+      // Extract mailing ID.
+      if (preg_match('/^mailing(\d+)/', $stats_dao->source, $matches)) {
+        $mailing_id = (int) $matches[1];
+        if (isset($mailings[$mailing_id])) {
+          // This is one of our mailings.
+          if ($stats_dao->recur === 'one-off') {
+            $key = 'one_off_';
+            $amount = $stats_dao->amount ?? 0;
+          }
+          elseif ($stats_dao->recur === 'first') {
+            $key = 'regular_';
+            $amount = ($stats_dao->amount ?? 0) * 12; // Assumed monthly
+          }
+          else {
+            // ignore 'repeat' types.
+            continue;
+          }
+
+          $mailings[$mailing_id][$key . 'people'] = $stats_dao->contributors ?? 0;
+          $mailings[$mailing_id][$key . 'amount'] = $amount;
+          $mailings[$mailing_id]['total_people'] += $stats_dao->contributors ?? 0;
+          $mailings[$mailing_id]['total_amount'] += $amount;
+        }
+      }
+    }
+    $stats_dao->free();
+
+    // Tidy up the mailngs data table; lookup maxes.
+    $maxes = [
+            'opened_rate'    => 0,
+            'one_off_people' => 0,
+            'one_off_amount' => 0,
+            'regular_people' => 0,
+            'regular_amount' => 0,
+            'total_people' => 0,
+            'total_amount' => 0,
+          ];
+    foreach ($mailings as &$mailing) {
+      foreach (array_keys($maxes) as $_) {
+        if ($_ !== 'opened_rate') {
+          $mailing[$_] = round($mailing[$_]);
+        }
+        if ($maxes[$_] < $mailing[$_]) {
+          $maxes[$_] = $mailing[$_];
+        }
+      }
+    }
+    // Actually it's simpler than this.
+    $maxes['one_off_people'] = $maxes['regular_people'] = $maxes['total_people'];
+    $maxes['one_off_amount'] = $maxes['regular_amount'] = $maxes['total_amount'];
+
+    return ['mailings' => $mailings, 'maxes' => $maxes];
+  }
+  /**
+   */
+  public function getMailingsInDateRange() {
+    $params = [
+      'is_completed' => 1,
+      'return'       => ['name', 'scheduled_date'],
+      'options'      => ['limit' => 0, 'sort' => 'scheduled_date DESC'],
+    ];
+    if ($this->date_range_end && $this->date_range_start) {
+      // Between.
+      $params['scheduled_date'] = ['BETWEEN' => [$this->date_range_start, $this->date_range_end]];
+    }
+    elseif ($this->date_range_start) {
+      // Only a start date.
+      $params['scheduled_date'] = ['>=' => $this->date_range_start];
+    }
+    elseif ($this->date_range_end) {
+      // Only an end date.
+      $params['scheduled_date'] = ['<=' => $this->date_range_end];
+    }
+    else {
+      // All mailings, ever!
+    }
+    $result = civicrm_api3('Mailing', 'get', $params);
+    if (empty($result['values'])) {
+      return [];
+    }
+
+    // We also need to know the open rate for each of these mailings.
+    // Get definitely SQL-safe list of mailing IDs.
+    $mailings = [];
+    foreach ($result['values'] as $id=>$vals) {
+      $id = (int) $id;
+      if ($id > 0) {
+        $mailings[$id] = $vals +
+          [
+            'opened_rate'    => '',
+            'one_off_people' => 0,
+            'one_off_amount' => 0,
+            'regular_people' => 0,
+            'regular_amount' => 0,
+            'total_people' => 0,
+            'total_amount' => 0,
+          ];
+      }
+    }
+
+    return $mailings;
+  }
 
   /**
    * Get array of integer group IDs.
