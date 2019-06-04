@@ -16,7 +16,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
 
   public function run() {
     // Example: Set the page-title dynamically; alternatively, declare a static title in xml/Menu/*.xml
-    CRM_Utils_System::setTitle(E::ts('EmailDashboard'));
+    CRM_Utils_System::setTitle(E::ts('Email Dashboard'));
 
     // Example: Assign a variable for use in a template
     //$this->assign('currentTime', date('Y-m-d H:i:s'));
@@ -39,6 +39,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       $this->date_range_start = date('Y-m-d', strtotime('today - 3 months'));
       $this->date_range_end = date('Y-m-d');
       break;
+
     case 'between':
       // User-specified dates apply.
       $this->date_range_start = parseDate($_GET['date_range_start'] ?? '');
@@ -49,6 +50,8 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
         $this->date_range_start = $this->date_range_end;
         $this->date_range_end = $a;
       }
+      break;
+
     case 'last_6_months':
     default:
       $this->date_range_type = 'last_6_months'; // Clarify this if something else had been set.
@@ -57,18 +60,26 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       break;
     }
 
+
+    // getAllMailingLists() also rebuilds smart groups.
+    $t=microtime(TRUE);
+    $this->assign('allLists', $this->getAllMailingLists());
+    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getAllMailingLists')); $t=microtime(TRUE);
     $subscriptions = $this->getSubscribersByNumberOfSubscriptions();
+    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSubscribersByNumberOfSubscriptions')); $t=microtime(TRUE);
     $this->assign('currentTotalUniqueSubscribers', number_format($this->total_unique));
     $this->assign('subscribersByListCount', $subscriptions);
     $active = $this->getActiveSubscribers();
+    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getActiveSubscribers')); $t=microtime(TRUE);
     $this->assign('activeSubscribers', number_format($active));
     $this->assign('activeSubscribersPc', number_format($active*100/$this->total_unique, 1));
     $this->assign('selectedListCounts', $this->getSelectedListCounts());
-    $this->assign('allLists', $this->getAllMailingLists());
+    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSelectedListCounts')); $t=microtime(TRUE);
     $this->assign('date_range_type', $this->date_range_type);
     $this->assign('date_range_start', $this->date_range_start ? date('j M Y', strtotime($this->date_range_start)) : '');
     $this->assign('date_range_end', $this->date_range_end ? date('j M Y', strtotime($this->date_range_end)) : '');
     $data = $this->getMailingsData();
+    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getMailingsData')); $t=microtime(TRUE);
     $this->assign('mailings', $data['mailings']);
     $this->assign('mailingsMaxes', json_encode($data['maxes']));
 
@@ -84,16 +95,25 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     if (!$selected_list_ids) {
       return 0;
     }
+    $sql = "SELECT SQL_NO_CACHE COUNT(*)
+    FROM (
+            SELECT DISTINCT contact_id FROM (
+              SELECT DISTINCT gc.contact_id
+              FROM civicrm_group_contact gc
+              WHERE gc.group_id IN ($selected_list_ids)
+                    AND status = 'Added'
 
-    $sql = "SELECT COUNT(distinct gc.contact_id) FROM civicrm_group_contact gc
-      WHERE gc.group_id IN ($selected_list_ids) AND status = 'Added'
-        AND gc.contact_id NOT IN (SELECT id FROM civicrm_contact WHERE is_deleted = 1)
-        AND gc.contact_id IN (
-          SELECT DISTINCT eq.contact_id
-          FROM civicrm_mailing_event_opened eo
-          INNER JOIN civicrm_mailing_event_queue eq ON eo.event_queue_id = eq.id
-          WHERE eo.time_stamp > NOW() - INTERVAL 6 MONTH
-        );";
+              UNION ALL
+              SELECT DISTINCT contact_id
+              FROM civicrm_group_contact_cache gcc
+              WHERE gcc.group_id IN ($selected_list_ids)
+            ) allgroups
+          WHERE contact_id NOT IN (SELECT id FROM civicrm_contact WHERE is_deleted)
+        ) all_subscribed_contacts
+    WHERE EXISTS (
+      SELECT contact_id FROM civicrm_mailing_event_queue eq
+          INNER JOIN civicrm_mailing_event_opened eo ON eo.event_queue_id = eq.id
+          WHERE eo.time_stamp > NOW() - INTERVAL 6 MONTH AND eq.contact_id = all_subscribed_contacts.contact_id);";
 
     $unique_contacts = (int) CRM_Core_DAO::executeQuery($sql)->fetchValue();
     return $unique_contacts;
@@ -112,16 +132,24 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
 
     $sql = "SELECT groups, COUNT(contact_id) contacts
       FROM (
-        SELECT gc.contact_id, COUNT(distinct gc.group_id) groups
-        FROM civicrm_group_contact gc
-        WHERE gc.group_id IN ($selected_list_ids)
-              AND status = 'Added'
-              AND gc.contact_id NOT IN (
-                SELECT id FROM civicrm_contact WHERE is_deleted = 1)
+        SELECT allgroups.contact_id, COUNT(distinct allgroups.group_id) groups
+        FROM (
+          SELECT gc.contact_id, gc.group_id
+          FROM civicrm_group_contact gc
+          WHERE gc.group_id IN ($selected_list_ids)
+                AND status = 'Added'
+                AND gc.contact_id NOT IN (
+                  SELECT id FROM civicrm_contact WHERE is_deleted = 1)
+
+          UNION ALL
+          SELECT contact_id, group_id
+          FROM civicrm_group_contact_cache gcc
+          WHERE gcc.group_id IN ($selected_list_ids)
+        ) allgroups
         GROUP BY contact_id
-        ) d
-        GROUP BY groups
-        ORDER BY groups
+      ) contact_group_counts
+      GROUP BY groups
+      ORDER BY groups
     ;";
     $subscriptions = CRM_Core_DAO::executeQuery($sql)->fetchAll();
     $total = 0;
@@ -145,7 +173,23 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     $groups = $this->getAllMailingLists();
 
     foreach ($this->getSelectedLists() as $group_id) {
-      $_ = CRM_Contact_BAO_Group::memberCount($group_id);
+      if (!empty($groups[$group_id]['saved_search_id'])) {
+        // This is a smart group.
+        $group = new CRM_Contact_BAO_Group();
+        $group->id = $group_id;
+        $group->find(1);
+        // Update cache if it needs it.
+        CRM_Contact_BAO_GroupContactCache::load($group, FALSE);
+        // Now count contact records.
+        $group_contact_cache = new CRM_Contact_BAO_GroupContactCache();
+        $group_contact_cache->group_id = $group_id;
+        $_ = $group_contact_cache->count();
+      }
+      else {
+        // Normal group.
+        $_ = CRM_Contact_BAO_Group::memberCount($group_id);
+      }
+
       $selected_lists[$group_id] = [
         'title'   => $groups[$group_id]['title'],
         'count'   => $_,
@@ -369,10 +413,12 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
   public function getAllMailingLists() {
     if (!isset($this->all_lists)) {
 
+      $t=microtime(TRUE);
       $selected = $this->getSelectedLists();
+      Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's to getSelectedLists'));
 
       $result = civicrm_api3('Group', 'get', [
-        'return'     => ["title"],
+        'return'     => ["title", 'saved_search_id'],
         'group_type' => "Mailing List",
         'is_active'  => 1,
         'is_hidden'  => 0,
@@ -380,7 +426,23 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       ]);
       $this->all_lists = [];
       foreach ($result['values'] as $id => $_) {
-        $this->all_lists[$id] = $_ + ['selected' => in_array($id, $selected)];
+
+        $is_selected = in_array($id, $selected);
+
+        $this->all_lists[$id] = $_ + ['selected' => $is_selected];
+
+        if ($is_selected && !empty($_['saved_search_id'])) {
+          // This is a smart group. Load the cache.
+
+          $group = new CRM_Contact_BAO_Group();
+          $group->id = $id;
+          $group->find(1);
+          // Update cache if it needs it.
+          $t=microtime(TRUE);
+          CRM_Contact_BAO_GroupContactCache::load($group, FALSE);
+          Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's to rebuild cache for ' . $group->title . ' saved search: "' . $group->saved_search_id .'"'));
+          unset($group);
+        }
       }
     }
     return $this->all_lists;

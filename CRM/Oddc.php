@@ -240,6 +240,7 @@ class CRM_Oddc {
       'return'             => $this->getUrlWithParams(['result' => 1, 'contributionID' => $contribution['id']]),
       'cancel_return'      => $this->input['return_url'],
     ];
+    Civi::log()->info("Oddc: Creating a paypal callback URL with params:", $paypalParams);
 
     // if recurring donations, add a few more items
     if ($this->input['is_recur']) {

@@ -1,6 +1,10 @@
 <style>{literal}
 /** Main layout grid */
 
+.smallprint {
+  font-size: 0.8rem;
+  color: #666;
+}
 .oddc-layout {
   display:grid;
   column-gap: 2rem;
@@ -69,12 +73,19 @@
   <p class="bigstat">
     <span class="bigstat__stat">{$activeSubscribersPc}%</span> active subscribers.
   </p>
+  <p class="smallprint">"Active" means people who have opened at least one email sent from CiviCRM in the past 6 months.</p>
+
   <table>
-    <tr><th>Groups</th><th>Contacts</th></tr>
+    <tr>
+    <th>No. emails per contact</th>
+    <th>No. of contacts</th></tr>
     {foreach from=$subscribersByListCount item="row"}
       <tr><td>{$row.groups}</td><td>{$row.contacts}</td></tr>
     {/foreach}
   </table>
+  <p class="smallprint">Explanation: e.g. {$subscribersByListCount[2].contacts}
+  different contacts are each signed up to {$subscribersByListCount[2].groups}
+  different emails. Where 'emails' here refers to CiviCRM Mailing Groups.</p>
 </div>
 <div class="oddc-layout__lists">
 <h2>Mailing Groups</h2>
@@ -129,18 +140,23 @@
   <table id="mailing-stats" class="compact">
   <thead>
   <tr>
-    <th>Mailing</th>
-    <th>Date</th>
-    <th>Open %</th>
-    <th>CR% O</th>
-    <th>CR% R</th>
-    <th>CR%</th>
-    <th># O</th>
-    <th># R</th>
-    <th>#</th>
-    <th>£ O</th>
-    <th>£ R</th>
-    <th>£</th>
+    <th rowspan=2>Mailing</th>
+    <th rowspan=2>Date</th>
+    <th rowspan=2>Open %</th>
+    <th colspan=3>Conversion rate</th>
+    <th colspan=3>Number of donors</th>
+    <th colspan=3>Amount donated £</th>
+  </tr>
+  <tr>
+    <th>One-off</th>
+    <th>Regular</th>
+    <th>Total</th>
+    <th>One-off</th>
+    <th>Regular</th>
+    <th>Total</th>
+    <th>One-off</th>
+    <th>Regular</th>
+    <th>Total</th>
   </tr>
   </thead>
   <tbody>
