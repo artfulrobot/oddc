@@ -289,7 +289,7 @@ function oddc__add_contact_data_from_checksum(&$odd_app_config, $cid, $cs) {
     }
   }
 }
-/** Augment the app config array with details loaded campaign funding. 
+/** Augment the app config array with details loaded campaign funding.
  *
  * @param Array $odd_app_config
  * @param String $campaign_name
@@ -369,3 +369,41 @@ function oddc_civicrm_alterMailParams(&$params, $context) {
     // Civi::log()->notice(__FUNCTION__ . ' Not altering: not msg_tpl_workflow_contribution and contribution_online_receipt or no contributionID', []);
   }
 }
+/**
+ * Implements hook_civicrm_unsubscribeGroups()
+ *
+ * @see https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_unsubscribeGroups/
+ */
+function oddc_civicrm_unsubscribeGroups($op, $mailingId, $contactId, &$groups, &$baseGroups) {
+  if ($op === 'unsubscribe') {
+    try {
+      $mailing = civicrm_api3('Mailing', 'getsingle', [
+        'id' => $mailingId,
+        'return' => ["campaign_id.title"],
+      ]);
+      if (strpos(($mailing['campaign_id.title'] ?? ''), 'FundraisingSend') !== FALSE) {
+        // Tag this person.
+        Civi::log()->info(__FUNCTION__ . " will tag Contact with 'No fundraising emails' because they unsubscribed from mailing",
+          ['contactId' => $contactId, 'mailingId' => $mailingId, 'mailing' => $mailing]);
+				civicrm_api3('EntityTag', 'create', [
+					'entity_table' => "civicrm_contact",
+					'entity_id'    => $contactId,
+					'tag_id'       => "No fundraising emails",
+				]);
+      }
+      else {
+        // Debugging.
+        Civi::log()->info(__FUNCTION__ . " will NOT tag contact with 'No fundraising emails' because mailing campaign does not include FundraisingSend",
+          ['contactId' => $contactId, 'mailingId' => $mailingId, 'mailing' => $mailing]);
+      }
+    }
+    catch (\Exception $e) {
+      Civi::log()->warning(__FUNCTION__ . " failed to find mailing/tag contact",
+        [
+          'mailingId' => $mailingId,
+          'message' => $e->getMessage(),
+        ]);
+    }
+  }
+}
+

@@ -25,3 +25,10 @@ Stored as a JSON blob with key `oddc_dashboards`. IT looks like this:
     {
         mailingLists: [123, 456, 789], // group IDs to show in dash.
     }
+
+## Automation: tag people who unsubscribe from Direct Mail emails.
+
+If the Mailing has a Campaign of type "Direct Mail" then people who unsubscribe
+get auto tagged with "No fundraising emails"
+
+Implemented with `hook_civicrm_unsubscribeGroups`
