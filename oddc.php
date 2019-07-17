@@ -375,8 +375,11 @@ function oddc_civicrm_alterMailParams(&$params, $context) {
  * @see https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_unsubscribeGroups/
  */
 function oddc_civicrm_unsubscribeGroups($op, $mailingId, $contactId, &$groups, &$baseGroups) {
-  if ($op === 'unsubscribe') {
+
+  // Nb. this hook is caled for GET requests, too, which have yet to be confirmed.
+  if ($op === 'unsubscribe' && (($_POST['_qf_Unsubscribe_next'] ?? '') === 'Unsubscribe')) {
     try {
+      Civi::log()->info(__FUNCTION__ . " inputs", ['contactId' => $contactId, 'mailingId' => $mailingId, 'groups' => $groups, 'baseGroups' => $baseGroups]);
       $mailing = civicrm_api3('Mailing', 'getsingle', [
         'id' => $mailingId,
         'return' => ["campaign_id.title"],
@@ -385,16 +388,26 @@ function oddc_civicrm_unsubscribeGroups($op, $mailingId, $contactId, &$groups, &
         // Tag this person.
         Civi::log()->info(__FUNCTION__ . " will tag Contact with 'No fundraising emails' because they unsubscribed from mailing",
           ['contactId' => $contactId, 'mailingId' => $mailingId, 'mailing' => $mailing]);
-				civicrm_api3('EntityTag', 'create', [
+				$result = civicrm_api3('EntityTag', 'getcount', [
 					'entity_table' => "civicrm_contact",
 					'entity_id'    => $contactId,
 					'tag_id'       => "No fundraising emails",
 				]);
+        if ($result == 0) {
+          Civi::log()->info(__FUNCTION__ . " tagging...");
+          civicrm_api3('EntityTag', 'create', [
+            'entity_table' => "civicrm_contact",
+            'entity_id'    => $contactId,
+            'tag_id'       => "No fundraising emails",
+          ]);
+        }
+        else {
+          Civi::log()->info(__FUNCTION__ . " already tagged");
+        }
       }
       else {
         // Debugging.
-        Civi::log()->info(__FUNCTION__ . " will NOT tag contact with 'No fundraising emails' because mailing campaign does not include FundraisingSend",
-          ['contactId' => $contactId, 'mailingId' => $mailingId, 'mailing' => $mailing]);
+        // Civi::log()->info(__FUNCTION__ . " will NOT tag contact with 'No fundraising emails' because mailing campaign does not include FundraisingSend", ['contactId' => $contactId, 'mailingId' => $mailingId, 'mailing' => $mailing]);
       }
     }
     catch (\Exception $e) {
