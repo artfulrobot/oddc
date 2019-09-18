@@ -26,34 +26,40 @@ function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
  */
 function civicrm_api3_contribution_Getoddstats($params) {
   $result = [ ];
+  $t = microtime(TRUE);
 
   if (!empty($params['test'])) {
     $result = [
       'contributions' => [
-        // period       campaign,  project    source_idx recur      amount, contribs
+        // 0            1          2          3          4         5     6       7
+        // period       campaign,  project    source_idx recur     nid   amount, contribs
         // Couple of one-offs.
-        [ '2017-01-01', 1,        'Project A', 0,       'one-off',  10,     1 ],
-        [ '2018-01-01', 2,        'Project B', 1,       'one-off',  10,     1 ],
+        [ '2017-01-01', 1,        'Project A', 0,       'one-off', 1234, 10,     1 ],
+        [ '2018-01-01', 2,        'Project B', 1,       'one-off', 1234, 10,     1 ],
         // Some regulars
-        [ '2017-02-01', 1,        'Project B', 1,       'first',    10,     1 ],
-        [ '2017-03-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-04-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-05-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-06-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-07-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-08-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-09-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
-        [ '2017-10-01', 1,        'Project B', 1,       'repeat',   10,     1 ],
+        [ '2017-02-01', 1,        'Project B', 1,       'first',   1234, 10,     1 ],
+        [ '2017-03-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-04-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-05-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-06-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-07-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-08-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-09-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
+        [ '2017-10-01', 1,        'Project B', 1,       'repeat',  1234, 10,     1 ],
         // Another regular
-        [ '2017-06-01', 2,        'Project A', 2,       'first',    30,     2 ],
-        [ '2018-01-01', 2,        'Project A', 2,       'repeat',   30,     2 ],
-        [ '2019-01-01', 2,        'Project A', 2,       'repeat',   30,     2 ],
+        [ '2017-06-01', 2,        'Project A', 2,       'first',   4567, 30,     2 ],
+        [ '2018-01-01', 2,        'Project A', 2,       'repeat',  4567, 30,     2 ],
+        [ '2019-01-01', 2,        'Project A', 2,       'repeat',  4567, 30,     2 ],
       ],
       'sources' => [
         [ 'name' => 'None'],
         [ 'name'=> 'Source A' ],
         [ 'name'=> 'Email A', 'opened_rate'=>"88.23%", 'clickthrough_rate'=> "2.56%", 'Delivered'=> "23414" ],
         [ 'name'=> 'Email B', 'opened_rate'=>"90.12%", 'clickthrough_rate'=> "10.56%", 'Delivered'=> "12323" ],
+      ],
+      'donation_pages' => [
+        1234 => 'Test donation page',
+        4567 => 'Other donation page',
       ],
       'campaigns' => [
         1 => 'Campaign A',
@@ -102,7 +108,9 @@ function civicrm_api3_contribution_Getoddstats($params) {
 
   require_once 'CRM/Core/BAO/CustomField.php';
   $id = CRM_Core_BAO_CustomField::getCustomFieldID('od_project', 'od_project_group');
-  list($table_name, $field_name) = CRM_Core_BAO_CustomField::getTableColumnGroup($id);
+  list($table_name, $project_field_name) = CRM_Core_BAO_CustomField::getTableColumnGroup($id);
+  $id = CRM_Core_BAO_CustomField::getCustomFieldID('donation_page_nid', 'od_project_group');
+  list($table_name, $donation_page_nid_field_name) = CRM_Core_BAO_CustomField::getTableColumnGroup($id);
 
   $date_from_sql = '';
   if (!empty($params['date_from'])) {
@@ -124,7 +132,8 @@ function civicrm_api3_contribution_Getoddstats($params) {
   $sql = "SELECT
       $sql_display_format period,
       campaign_id,
-      proj.`$field_name` project,
+      proj.`$project_field_name` project,
+      proj.`$donation_page_nid_field_name` donation_page_nid,
       source,
       IF(cc.contribution_recur_id IS NULL,
         'one-off',
@@ -141,7 +150,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
     FROM civicrm_contribution cc
     LEFT JOIN `$table_name` proj ON proj.entity_id = cc.id
     WHERE is_test = 0 $date_from_sql $date_to_sql
-    GROUP BY $sql_date_format DESC, campaign_id, proj.`$field_name`, source, recur
+    GROUP BY $sql_date_format DESC, campaign_id, proj.`$project_field_name`, donation_page_nid, source, recur
   ";
   $dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
   $campaign_ids = [];
@@ -149,6 +158,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
   // Ensure the 0 index-ed item is for None; we know we'll need this.
   $unique_sources = ['(None)' => 0];
 
+  $unique_pages = [];
   while ($dao->fetch()) {
     if ($dao->campaign_id) {
       $campaign_ids[$dao->campaign_id] = FALSE;
@@ -157,18 +167,25 @@ function civicrm_api3_contribution_Getoddstats($params) {
     if (!isset($unique_sources[$source])) {
       $unique_sources[$source] = count($unique_sources);
     }
+
+    $nid = $dao->donation_page_nid ?? 0;
+    $unique_pages[$nid] = 1;
+
     $result[] = [
       $dao->period,              // 0
       $dao->campaign_id,         // 1
       $dao->project,             // 2
       $unique_sources[$source],  // 3
       $dao->recur,               // 4
-      (double) $dao->amount,     // 5
-      (int) $dao->contributions, // 6
+      $nid,                      // 5
+      (double) $dao->amount,     // 6
+      (int) $dao->contributions, // 7
     ];
   }
   $dao->free();
   $result = ['contributions' => $result];
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load main data SQL');
+  $t = microtime(TRUE);
 
   // Now provide a campaign lookup table.
   $campaigns = [];
@@ -183,6 +200,22 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
   $result['campaigns'] = $campaigns;
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load campaigns');
+  $t = microtime(TRUE);
+
+  // Add internal name of donation pages (Drupal query.)
+  $result['donation_pages'] = [];
+  if ($unique_pages) {
+    $_ = db_query(
+      'SELECT entity_id nid, field_internal_name_value title FROM field_data_field_internal_name WHERE entity_id IN (:ids)',
+      [':ids' => array_keys($unique_pages)])
+      ->fetchAllKeyed();
+    foreach ($_ as $nid => $title) {
+      $result['donation_pages']["nid$nid"] = $title;
+    }
+  }
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load donation pages');
+  $t = microtime(TRUE);
 
 
   // Add Email stats.
@@ -203,6 +236,8 @@ function civicrm_api3_contribution_Getoddstats($params) {
     ]);
     $mailings = $mailings['values'] ?? [];
   }
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load mailings');
+  $t = microtime(TRUE);
 
   // Create the source lookup data.
   $result['sources'] = [];
@@ -238,6 +273,8 @@ function civicrm_api3_contribution_Getoddstats($params) {
       $result['sources'][$idx] = [ 'name' => $name, ];
     }
   }
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load source metadata');
+  $t = microtime(TRUE);
 
   // Get joiners and leavers from the contrib recur.
   $sql = "SELECT
@@ -268,6 +305,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
   $result['recur'] = array_values($result['recur']);
+  Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load joiners/leavers');
 
 
   return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');

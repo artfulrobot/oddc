@@ -98,7 +98,7 @@ class CRM_Oddc {
     }
 
     // Things we trust.
-    foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list'] as $_) {
+    foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list', 'donation_page_nid'] as $_) {
       $params[$_] = $input[$_];
     }
 
@@ -202,7 +202,11 @@ class CRM_Oddc {
     }
     $this->setGiftAidParam($contrib_params);
     $this->setOdProjectParam($contrib_params);
+    $this->setDonationPageNidParam($contrib_params);
 
+    Civi::log()->info('Contribution.create call with params:',
+      ['params_used' => json_encode($contrib_params, JSON_PRETTY_PRINT),
+       'input_data'=> json_encode($this->input, JSON_PRETTY_PRINT)]);
     $contribution = civicrm_api3('Contribution', 'create', $contrib_params);
     // Store the Contribution ID in session data so that the thank you page can send an email.
     // The contribution ID is passed in as contributionID on the success return URL.
@@ -409,6 +413,7 @@ class CRM_Oddc {
     ];
     $this->setOdProjectParam($contrib_params);
     $this->setGiftAidParam($contrib_params);
+    $this->setDonationPageNidParam($contrib_params);
     $contrib = civicrm_api3('Contribution', 'create', $contrib_params);
 
     // Now we send thank you.
@@ -683,5 +688,17 @@ class CRM_Oddc {
     require_once 'CRM/Core/BAO/CustomField.php';
     $id = CRM_Core_BAO_CustomField::getCustomFieldID('od_project', 'od_project_group');
     $params["custom_$id"] = $this->input['project'];
+  }
+  /**
+   * Lookup the custom field ID for Donation Page Node ID and set it as
+   * a parameter for the Contribution.create call.
+   *
+   * @param &Array params for the Contribution.create API call.
+   */
+  protected function setDonationPageNidParam(&$params) {
+    // Look up the custom_N name for the field.
+    require_once 'CRM/Core/BAO/CustomField.php';
+    $id = CRM_Core_BAO_CustomField::getCustomFieldID('donation_page_nid', 'od_project_group');
+    $params["custom_$id"] = $this->input['donation_page_nid'];
   }
 }

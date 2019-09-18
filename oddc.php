@@ -112,6 +112,8 @@ function oddc_civicrm_install() {
     'option_group_id' => $opts_group['id'],
   ],
   ['label' => 'oD Project']);
+
+  // ... we also need to add donation_page_nid field. @todo
 }
 
 /**
