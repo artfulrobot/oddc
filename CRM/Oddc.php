@@ -738,7 +738,7 @@ class CRM_Oddc {
           'payment_processor_id'  => $recur['payment_processor_id.id'],
           'entity'                => preg_replace('/^(openTrust|openDemocracy).*$/', '$1', $recur['payment_processor_id.name'] ?? 'openDemocracy'),
           'amount'                => $recur['amount'],
-          'is_test'               => $recur['is_test'],
+          'is_test'               => $recur['is_test'] ?? 0,
           'processor'             => $recur['payment_processor_id.payment_processor_type_id.name'],
           'currency'              => $recur['currency'],
           'currencySymbol'        => ['GBP' => '£', 'USD' => '$', 'EUR' => '€'][$recur['currency']] ?? $recur['currency'],
