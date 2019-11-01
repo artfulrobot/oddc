@@ -422,3 +422,56 @@ function oddc_civicrm_unsubscribeGroups($op, $mailingId, $contactId, &$groups, &
   }
 }
 
+/**
+ * Provide the {currentRegularGiving} token.
+ */
+function oddc_civicrm_tokens( &$tokens ) {
+  $tokens['oD'] = [
+    'currentRegularGiving' => E::ts('Current regular giving'),
+  ];
+}
+/**
+ * Creates the currentRegularGiving token.
+ */
+function oddc_civicrm_tokenValues(&$values, $cids, $job = null, $tokens = array(), $context = null) {
+  if (empty($tokens['oD'])) {
+    return;
+  }
+
+  // $tokens is sometimes like: { 'contact': { 'foo': 1 } } and sometimes like { 'contact': ['foo'] }
+  if (is_numeric(key($tokens['oD']))) {
+    // We have the 2nd form.
+    $tokens_in_use = array_values($tokens['oD']);
+  }
+  else {
+    // tokens are keys.
+    $tokens_in_use = array_keys($tokens['oD']);
+  }
+
+  $contact_ids = [];
+  foreach($cids as $cid) {
+    $contact_ids[] = (int) $cid;
+  }
+
+  foreach ($contact_ids as $cid) {
+    $giving = CRM_Oddc::factory()->getCurrentRegularGiving($cid);
+    $description = '';
+    switch (count($giving)) {
+    case 1:
+      // Good.
+      $description = 'You are currently giving ' . $giving[0]['description'] . '.';
+      break;
+
+    case 0:
+      $description = 'You are not currently giving regularly to openDemocracy.';
+      break;
+
+    default:
+      $description = 'You currently have multiple regular donations set up :'
+        . implode(' and ', array_column($giving, 'description')) . '.';
+    }
+
+    $values[$cid]['oD.currentRegularGiving'] = $description;
+  }
+}
+

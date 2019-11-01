@@ -701,4 +701,59 @@ class CRM_Oddc {
     $id = CRM_Core_BAO_CustomField::getCustomFieldID('donation_page_nid', 'od_project_group');
     $params["custom_$id"] = $this->input['donation_page_nid'];
   }
+  /**
+   * @return array of arrays like:
+   * - contribution_recur_id
+   * - entity (string openDemocracy or openTrust)
+   * - amount (like 1.23)
+   * - processor (like "GoCardless")
+   * - currency (e.g. GBP)
+   * - currencySymbol (e.g. £|$|€|CAD)
+   * - description string.
+   *
+   */
+  public function getCurrentRegularGiving($contact_id) {
+    $contact_id = (int) $contact_id;
+    if ($contact_id <1) {
+      throw new InvalidArgumentException("Invalid contact_id");
+    }
+    // Find active recurring payments.
+    $results = civicrm_api3('ContributionRecur', 'get', [
+      'contact_id'             => $contact_id,
+      'contribution_status_id' => 'In Progress',
+      'return' => [
+        'id', 'amount', 'currency', 'frequency_unit',
+        'payment_processor_id.id',
+        'payment_processor_id.name',
+        'payment_processor_id.payment_processor_type_id.name',
+        'is_test',
+      'financial_type_id.name', 'frequency_interval'],
+    ]);
+
+    $regulars = [];
+    if ($results['values'] ?? NULL) {
+      foreach($results['values'] as $recur) {
+        $_ = [
+          'contribution_recur_id' => $recur['id'],
+          'payment_processor_id'  => $recur['payment_processor_id.id'],
+          'entity'                => preg_replace('/^(openTrust|openDemocracy).*$/', '$1', $recur['payment_processor_id.name'] ?? 'openDemocracy'),
+          'amount'                => $recur['amount'],
+          'is_test'               => $recur['is_test'],
+          'processor'             => $recur['payment_processor_id.payment_processor_type_id.name'],
+          'currency'              => $recur['currency'],
+          'currencySymbol'        => ['GBP' => '£', 'USD' => '$', 'EUR' => '€'][$recur['currency']] ?? $recur['currency'],
+        ];
+
+        if ($recur['frequency_interval'] > 1) {
+          $_['description'] = "$_[currencySymbol]$_[amount] every $recur[frequency_interval] $recur[frequency_unit]s to $_[entity]";
+        }
+        else {
+          $_['description'] = "$_[currencySymbol]$_[amount] a $recur[frequency_unit] to $_[entity]";
+        }
+        $regulars[] = $_;
+      }
+    }
+
+    return $regulars;
+  }
 }

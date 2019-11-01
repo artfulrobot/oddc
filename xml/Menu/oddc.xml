@@ -6,4 +6,10 @@
     <title>EmailDashboard</title>
     <access_arguments>access CiviCRM</access_arguments>
   </item>
+  <item>
+    <path>civicrm/update-giving</path>
+    <page_callback>CRM_Oddc_Page_UpdateGiving</page_callback>
+    <title>UpdateGiving</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
 </menu>
