@@ -720,28 +720,31 @@ class CRM_Oddc {
     // Find active recurring payments.
     $results = civicrm_api3('ContributionRecur', 'get', [
       'contact_id'             => $contact_id,
-      'contribution_status_id' => 'In Progress',
+      'contribution_status_id' => ['IN' => ['In Progress', 'Pending']],
       'return' => [
         'id', 'amount', 'currency', 'frequency_unit',
         'payment_processor_id.id',
         'payment_processor_id.name',
+        'contribution_status_id',
         'payment_processor_id.payment_processor_type_id.name',
         'is_test',
       'financial_type_id.name', 'frequency_interval'],
     ]);
 
     $regulars = [];
+    $pending_status = CRM_Core_PseudoConstant::getKey('CRM_Contribute_BAO_ContributionRecur', 'contribution_status_id', 'Pending');
     if ($results['values'] ?? NULL) {
       foreach($results['values'] as $recur) {
         $_ = [
-          'contribution_recur_id' => $recur['id'],
-          'payment_processor_id'  => $recur['payment_processor_id.id'],
-          'entity'                => preg_replace('/^(openTrust|openDemocracy).*$/', '$1', $recur['payment_processor_id.name'] ?? 'openDemocracy'),
-          'amount'                => $recur['amount'],
-          'is_test'               => $recur['is_test'] ?? 0,
-          'processor'             => $recur['payment_processor_id.payment_processor_type_id.name'],
-          'currency'              => $recur['currency'],
-          'currencySymbol'        => ['GBP' => '£', 'USD' => '$', 'EUR' => '€'][$recur['currency']] ?? $recur['currency'],
+          'contribution_recur_id'  => $recur['id'],
+          'contribution_status'    => ($pending_status == $recur['contribution_status_id']) ? 'pending' : 'live',
+          'payment_processor_id'   => $recur['payment_processor_id.id'],
+          'entity'                 => preg_replace('/^(openTrust|openDemocracy).*$/', '$1', $recur['payment_processor_id.name'] ?? 'openDemocracy'),
+          'amount'                 => $recur['amount'],
+          'is_test'                => $recur['is_test'] ?? 0,
+          'processor'              => $recur['payment_processor_id.payment_processor_type_id.name'],
+          'currency'               => $recur['currency'],
+          'currencySymbol'         => ['GBP' => '£', 'USD' => '$', 'EUR' => '€'][$recur['currency']] ?? $recur['currency'],
         ];
 
         if ($recur['frequency_interval'] > 1) {
@@ -749,6 +752,9 @@ class CRM_Oddc {
         }
         else {
           $_['description'] = "$_[currencySymbol]$_[amount] a $recur[frequency_unit] to $_[entity]";
+        }
+				if ($_['contribution_status'] === 'pending') {
+					$_['description'] .= " (not started yet)";
         }
         $regulars[] = $_;
       }
