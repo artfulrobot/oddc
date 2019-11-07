@@ -735,6 +735,12 @@ class CRM_Oddc {
     $pending_status = CRM_Core_PseudoConstant::getKey('CRM_Contribute_BAO_ContributionRecur', 'contribution_status_id', 'Pending');
     if ($results['values'] ?? NULL) {
       foreach($results['values'] as $recur) {
+        if ($pending_status == $recur['contribution_status_id']
+          && preg_match('/paypal/i', $recur['payment_processor_id.payment_processor_type_id.name'])) {
+          // Do not count PayPal 'pending' ones - they are probably abandoned.
+          continue;
+        }
+
         $_ = [
           'contribution_recur_id'  => $recur['id'],
           'contribution_status'    => ($pending_status == $recur['contribution_status_id']) ? 'pending' : 'live',
@@ -783,7 +789,7 @@ class CRM_Oddc {
       break;
 
     default:
-      $description = 'You currently have multiple regular donations set up :'
+      $description = 'You currently have multiple regular donations set up: '
         . implode(' and ', array_column($giving, 'description')) . '.';
     }
     return $description;

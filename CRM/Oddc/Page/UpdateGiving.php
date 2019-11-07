@@ -3,7 +3,7 @@ use CRM_Oddc_ExtensionUtil as E;
 
 class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
-  const UPGRADE_DONATE_URL = '/node/29';
+  const UPGRADE_DONATE_URL = '/node/33';
 
   public function run() {
     // Drupal global:
