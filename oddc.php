@@ -262,6 +262,10 @@ function oddc__complete_paypal($input) {
  * the checksum is valid.
  */
 function oddc__add_contact_data_from_checksum(&$odd_app_config, $cid, $cs) {
+
+  // Set default empty giving string.
+  $odd_app_config['giving'] = '';
+
   $cid = (int) $cid;
   if (!$cid>0) {
     // Suspicious.
