@@ -284,6 +284,9 @@ function oddc__add_contact_data_from_checksum(&$odd_app_config, $cid, $cs) {
   array_pop($fields);
   $fields[] = 'country';
 
+  // Look up current giving
+  $odd_app_config['giving'] = CRM_Oddc::factory()->getCurrentRegularGivingDescription($cid);
+
   // Copy any data we have into the app config.
   foreach ($fields as $_) {
     if (!empty($contact[$_])) {
@@ -454,24 +457,7 @@ function oddc_civicrm_tokenValues(&$values, $cids, $job = null, $tokens = array(
   }
 
   foreach ($contact_ids as $cid) {
-    $giving = CRM_Oddc::factory()->getCurrentRegularGiving($cid);
-    $description = '';
-    switch (count($giving)) {
-    case 1:
-      // Good.
-      $description = 'You are currently giving ' . $giving[0]['description'] . '.';
-      break;
-
-    case 0:
-      $description = 'You are not currently giving regularly to openDemocracy.';
-      break;
-
-    default:
-      $description = 'You currently have multiple regular donations set up :'
-        . implode(' and ', array_column($giving, 'description')) . '.';
-    }
-
-    $values[$cid]['oD.currentRegularGiving'] = $description;
+    $values[$cid]['oD.currentRegularGiving'] = CRM_Oddc::factory()->getCurrentRegularGivingDescription($cid);
   }
 }
 

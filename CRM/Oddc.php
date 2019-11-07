@@ -756,4 +756,30 @@ class CRM_Oddc {
 
     return $regulars;
   }
+  /**
+   * Description logic for regular giving.
+   *
+   * @param int $contact_id
+   *
+   * @return string
+   *
+   */
+  public function getCurrentRegularGivingDescription($contact_id) {
+    $giving = CRM_Oddc::factory()->getCurrentRegularGiving($contact_id);
+    switch (count($giving)) {
+    case 0:
+      $description = 'You are not currently giving regularly to openDemocracy.';
+      break;
+
+    case 1:
+      // Good.
+      $description = 'You are currently giving ' . $giving[0]['description'] . '.';
+      break;
+
+    default:
+      $description = 'You currently have multiple regular donations set up :'
+        . implode(' and ', array_column($giving, 'description')) . '.';
+    }
+    return $description;
+  }
 }
