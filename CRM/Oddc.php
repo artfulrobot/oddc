@@ -736,7 +736,7 @@ class CRM_Oddc {
     if ($results['values'] ?? NULL) {
       foreach($results['values'] as $recur) {
         if ($pending_status == $recur['contribution_status_id']
-          && preg_match('/paypal/i', $recur['payment_processor_id.payment_processor_type_id.name'])) {
+          && 'PayPal_Standard' === $recur['payment_processor_id.payment_processor_type_id.name']) {
           // Do not count PayPal 'pending' ones - they are probably abandoned.
           continue;
         }

@@ -118,6 +118,10 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
   /**
    * Handle ajax requests.
+   *
+   * This either returns an object like:
+   * { error: 'message', success: FALSE }
+   * { success: TRUE }
    */
   public function processAjax($contact_id, $post_data) {
     $giving = CRM_Oddc::getCurrentRegularGiving($contact_id);
@@ -158,6 +162,13 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
         'contribution_recur_id' => $giving['contribution_recur_id'],
         'amount'                => $post_data['amount'],
       ]);
+
+      // Now Update CiviCRM's record.
+      civicrm_api3('ContributionRecur', 'create', [
+        'id'     => $giving['contribution_recur_id'],
+        'amount' => $post_data['amount'],
+      ]);
+
       CRM_Core_Page_AJAX::returnJsonResponse($response);
     }
     catch (PaymentProcessorException $e) {
