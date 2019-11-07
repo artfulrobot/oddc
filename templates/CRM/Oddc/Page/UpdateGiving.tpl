@@ -55,7 +55,7 @@
     $.ajax({
       method: 'POST',
       data: {
-        contact_id: {/literal}{$contact_id}{literal},
+        cid: {/literal}{$contact_id}{literal},
         cs: '{/literal}{$checksum}{literal}',
         amount: $amount.val()
       }

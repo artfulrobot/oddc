@@ -3,7 +3,7 @@ use CRM_Oddc_ExtensionUtil as E;
 
 class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
-  const UPGRADE_DONATE_URL = '/';
+  const UPGRADE_DONATE_URL = '/node/29';
 
   public function run() {
     // Drupal global:
@@ -18,12 +18,12 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
         // Not an xhr request.
         CRM_Utils_System::civiExit(401);
       }
-      $contact_id = (int) ($_POST['contact_id'] ?? 0);
+      $contact_id = (int) ($_POST['cid'] ?? 0);
       $checksum = $_POST['cs'] ?? '';
       $is_ajax = TRUE;
     }
     else {
-      $contact_id = (int) ($_GET['contact_id'] ?? 0);
+      $contact_id = (int) ($_GET['cid'] ?? 0);
       $checksum = $_GET['cs'] ?? '';
       $is_ajax = FALSE;
     }
@@ -62,18 +62,18 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
       // Hmmm. they don't have a regular gift, send them to donate page.
       // (they should probably not have received this mailing, so call this a warning)
       Civi::log()->warning("UpdateGiving: Not currently giving. User sent to donate page.", ['contact_id' => $contact_id]);
-      CRM_Utils_System::redirect(static::UPGRADE_DONATE_URL);
+      $this->redirectToDonate($contact_id, $checksum);
     }
     if (count($giving) > 1) {
       // Multiple.
       Civi::log()->warning("UpdateGiving: Multiple current recurring payments. User sent to donate page.", ['contact_id' => $contact_id]);
-      CRM_Utils_System::redirect(static::UPGRADE_DONATE_URL);
+      $this->redirectToDonate($contact_id, $checksum);
     }
     else {
       // Single, normal giving.
       if ($giving[0]['processor'] !== 'GoCardless') {
         Civi::log()->info("UpdateGiving: Non GoCardless supporter sent to donate page.", ['contact_id' => $contact_id]);
-        CRM_Utils_System::redirect(static::UPGRADE_DONATE_URL);
+        $this->redirectToDonate($contact_id, $checksum);
       }
     }
 
@@ -184,4 +184,14 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
   }
 
+  /**
+   * Redirect to donate page.
+   */
+  public function redirectToDonate($contact_id, $checksum) {
+    $params = [
+      'cid' => $contact_id,
+      'cs' => $checksum,
+    ];
+    CRM_Utils_System::redirect(static::UPGRADE_DONATE_URL . '?' . http_build_query($params));
+  }
 }
