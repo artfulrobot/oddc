@@ -381,8 +381,12 @@ class CRM_Oddc {
     $contrib_recur = civicrm_api3('ContributionRecur', 'create', array(
       'amount'                 => $params['amount'],
       'contact_id'             => $this->contact_id,
-      'contribution_status_id' => "Pending", // This is useful and should get changed to
-                                             // In Progress after successful payment.
+      // 2019-11-15 We now set this to In Progress to copy designed bahaviour.
+      // Old notes:
+      // Was set to Pending, until first payment came in.
+      // This is useful and should get changed to
+      // In Progress after successful payment.
+      'contribution_status_id' => "In Progress",
       'currency'               => 'GBP', // fixed.
       'financial_type_id'      => $financial_type_id,
       'frequency_interval'     => 1,
@@ -559,7 +563,7 @@ class CRM_Oddc {
 
     Civi::log()->info("Oddc::sendThankYouEmail. input is", ['input' => json_encode($input, JSON_PRETTY_PRINT)]);
     // Check for an optional configured thank you message.
-    if (!(((int) $input['thanks_message_template_id'] ?? 0)>0)) {
+    if (!(((int) ($input['thanks_message_template_id'] ?? 0))>0)) {
       Civi::log()->info("Oddc::sendThankYouEmail. No thanks_message_template_id '$input[thanks_message_template_id]'. Will not send email.", []);
       return;
     }
