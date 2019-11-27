@@ -1,4 +1,4 @@
-<div style="margin:0 auto;max-width: 1200px;padding:0 1rem;">
+<div class="update-giving" >
 <h1>Your Donation</h1>
 
 {if $is_test}
