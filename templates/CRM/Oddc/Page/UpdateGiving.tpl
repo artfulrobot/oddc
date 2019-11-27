@@ -7,7 +7,7 @@
   </div>
 {/if}
 
-<p><strong>Thanks, {$who}</strong> for your regular donation of {$giving.description}.</p>
+<p id="donation-current"><strong>Thanks, {$who}</strong> for your regular donation of {$giving.description}.</p>
 
 <noscript>Sorry, this page requires Javascript to work.</noscript>
 <div style="display:none" id="donation-upgrade">
@@ -31,15 +31,18 @@
   $('#donation-upgrade').show();
 
   var $btn = $('#newAmountSubmit');
-  var $amount = $('#newAmount');
+  var $amount = $('input[name="newAmount"]');
   var $working = $('#donation-working');
   var $success = $('#donation-success');
+  var $donationCurrent = $('#donation-current');
 
   function ready() {
     if (parseFloat($amount.val()) > 1) {
+      console.log("enabled submit");
       $btn.prop('disabled', false);
     }
     else {
+      console.log("disabled submit as amount not valid", $amount.val());
       $btn.prop('disabled', true);
     }
   }
@@ -50,7 +53,7 @@
     $btn.prop('disabled', true);
     $amount.prop('disabled', true);
     $working.text('Please wait...')
-        .style({color: '#0a0'})
+        .css({color: '#0a0'})
         .show();
     $.ajax({
       method: 'POST',
@@ -61,13 +64,20 @@
       }
     }).then(
       function(r) {
-        $('#donation-upgrade').hide();
-        $success.text("Successfully updated your donation. Thanks!");
+        if (!r || !r.success) {
+          $working.text("Sorry, there was an error trying to update your donation. Please contact us.")
+          .css({color: '#a00'});
+        }
+        else {
+          $donationCurrent.hide();
+          $('#donation-upgrade').hide();
+          $success.text("Successfully updated your donation. Thanks!");
+        }
       },
       function(e, r) {
         console.error(e, r);
         $working.text("Sorry, there was an error trying to update your donation.")
-        .style({color: '#a00'});
+        .css({color: '#a00'});
       });
   });
 
