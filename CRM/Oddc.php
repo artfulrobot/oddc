@@ -17,7 +17,7 @@ class CRM_Oddc {
     'company' => 'Donation - openDemocracy',
   ];
 
-  /** @var mixed Payment Processor */
+  /** @var CRM_Core_Payment */
   public $payment_processor;
 
   /** @var int Contact ID */
@@ -153,9 +153,6 @@ class CRM_Oddc {
    * @return string URL
    */
   protected function processPayPal() {
-
-    // Copy financial_type_id set in validate()
-    $params['financial_type_id'] = $this->input['financial_type_id'];
 
     // Used a couple of times below.
     $payment_processor_config = $this->payment_processor->getPaymentProcessor();
@@ -303,7 +300,8 @@ class CRM_Oddc {
     // We have to do the work of
     // $this->payment_processor->getRedirectParametersFromParams()
     // Turned out far less code to copy just the relevant bits here than try to reuse that.
-    $payment_processor_config = $this->payment_processor->getPaymentProcessor();
+    // $payment_processor_config = $this->payment_processor->getPaymentProcessor();
+
     $params = [
       'session_token'        => $token,
       'description'          => $this->input['financial_type_id'],
@@ -370,8 +368,6 @@ class CRM_Oddc {
       'interval_unit'    => 'monthly',
     ] + $pre_data;
     $result = CRM_GoCardlessUtils::completeRedirectFlowWithGoCardless($params);
-    $gc_api        = $result['gc_api'];
-    $redirect_flow = $result['redirect_flow'];
     $subscription  = $result['subscription'];
 
     // Create a ContributionRecur record.
@@ -392,7 +388,7 @@ class CRM_Oddc {
       'frequency_interval'     => 1,
       'frequency_unit'         => "month",
       'campaign_id'            => $params['campaign'],
-      'is_test'                => $this->payment_processor->isTestMode(),
+      'is_test'                => $this->payment_processor->getPaymentProcessor()['is_test'],
       'payment_instrument_id'  => 'direct_debit_gc',
       'payment_processor_id'   => $params['payment_processor_id'],
       'start_date'             => $subscription->start_date,
@@ -409,7 +405,7 @@ class CRM_Oddc {
       'financial_type_id'      => $financial_type_id,
       'campaign_id'            => $params['campaign'],
       'source'                 => $params['source'],
-      'is_test'                => $this->payment_processor->isTestMode(),
+      'is_test'                => $this->payment_processor->getPaymentProcessor()['is_test'],
       'payment_instrument_id'  => 'direct_debit_gc',
       'payment_processor_id'   => $params['payment_processor_id'],
       'receive_date'           => $subscription->start_date,
@@ -425,6 +421,8 @@ class CRM_Oddc {
     $this->input['contributionID'] = $contrib['id'];
     $this->input['contactID'] = $this->contact_id;
     $this->sendThankYouEmail($this->input);
+
+    $this->upgradesActions($this->input);
 
   }
   /**
@@ -545,8 +543,10 @@ class CRM_Oddc {
 
     $this->sendThankYouEmail($input);
 
+    $this->upgradesActions($input);
     // Clean up session data a bit as it is no longer needed.
     unset($_SESSION['oddc_paypal_contribs'][$input['contributionID']]);
+
   }
   /**
    * Send thank you email.
@@ -640,6 +640,44 @@ class CRM_Oddc {
     return $result;
   }
   /**
+   * On completion of setup of new regular giving,
+   */
+  public function upgradesActions($input) {
+
+    if (empty($input['is_upgrade'])) {
+      // This is not an upgrades page.
+      return;
+    }
+
+    // Load contribution, check it's a regular.
+    $contribution = civicrm_api3('Contribution', 'getsingle', [
+      'id'     => $input['contributionID'],
+      'return' => ['total_amount', 'contribution_recur_id', 'note', 'financial_type_id']]);
+    if (!($contribution['contribution_recur_id'] ?? 0)) {
+      // This is a one off.
+      return;
+    }
+
+    // Is recurring.
+    // This is an upgrade, therefore we should record an activity.
+    $activity_params = [
+      'target_id'         => [$input['contactID']],
+      'activity_type_id'  => 'Update Recurring Contribution',
+      'source_contact_id' => $input['contactID'],
+      'subject'           => 'New donation to replace existing regular giving',
+      'status_id'         => 'Scheduled',
+    ];
+    // Fetch description of their current giving.
+    $activity_params['details'] =
+      "<p>New giving: $contribution[total_amount] monthly.</p>"
+      . "<p>All giving: "
+      . htmlspecialchars(CRM_Oddc::getCurrentRegularGivingDescription($input['contactID']))
+      . '</p>'
+      . "<p><strong>Note: all previous regular giving arrangements need to be cancelled, leaving only this latest one in place</strong></p>";
+
+    civicrm_api3('Activity', 'create', $activity_params);
+  }
+  /**
    * Update total received on campaign targets.
    */
   public function updateCampaignTargetStats() {
@@ -653,7 +691,7 @@ class CRM_Oddc {
       if (!isset($details[self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD])
         || $details[self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD] != $raised) {
         // Need to update total.
-        $result = civicrm_api3('Campaign', 'create', ["id" => $campaign_id, self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD => $raised]);
+        civicrm_api3('Campaign', 'create', ["id" => $campaign_id, self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD => $raised]);
         Civi::log()->info("Updated campaign $campaign_id with total " . self::API_CUSTOM_FIELD_CAMPAIGN_FUNDING_RCVD . " = " . $raised);
       }
     }
@@ -716,7 +754,7 @@ class CRM_Oddc {
    * - description string.
    *
    */
-  public function getCurrentRegularGiving($contact_id) {
+  public static function getCurrentRegularGiving($contact_id) {
     $contact_id = (int) $contact_id;
     if ($contact_id <1) {
       throw new InvalidArgumentException("Invalid contact_id");
@@ -780,7 +818,7 @@ class CRM_Oddc {
    * @return string
    *
    */
-  public function getCurrentRegularGivingDescription($contact_id) {
+  public static function getCurrentRegularGivingDescription($contact_id) {
     $giving = CRM_Oddc::factory()->getCurrentRegularGiving($contact_id);
     switch (count($giving)) {
     case 0:

@@ -1,5 +1,6 @@
 <?php
 use CRM_Oddc_ExtensionUtil as E;
+use Civi\Payment\Exception\PaymentProcessorException;
 
 class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
@@ -146,6 +147,7 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
     }
 
     // OK, looking good.
+    Civi::log()->info("UpdateGiving: processing request to increase Contact $contact_id from $giving[amount] to $post_data[amount] (contribution_recur_id $giving[contribution_recur_id])");
 
     // Get the processor for this ContributionRecur.
     $processor = Civi\Payment\System::singleton()->getById($giving['payment_processor_id']);
@@ -167,6 +169,14 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
       civicrm_api3('ContributionRecur', 'create', [
         'id'     => $giving['contribution_recur_id'],
         'amount' => $post_data['amount'],
+      ]);
+
+      $this->notify([
+        'message_html'          => $message,
+        'contact_id'            => $contact_id,
+        'contribution_recur_id' => $giving['contribution_recur_id'],
+        'amount_old'            => $giving['amount'],
+        'amount_new'            => $post_data['amount'],
       ]);
 
       CRM_Core_Page_AJAX::returnJsonResponse($response);
@@ -204,5 +214,44 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
       'cs' => $checksum,
     ];
     CRM_Utils_System::redirect(static::UPGRADE_DONATE_URL . '?' . http_build_query($params));
+  }
+  /**
+   * Handle business logic for notifying people when someone does a GC upgrade.
+   *
+   * @param array $data with keys:
+   *    - message_html
+   *    - amount_new
+   *    - amount_old
+   *    - contribution_recur_id
+   *    - contact_id
+   */
+  public static function notify($data) {
+
+    $message  = "<p>$data[message]</p>"
+      . "<p>Original amount: " . htmlspecialchars($data['amount_old']) . "</p>"
+      . "<p>New amount: "      . htmlspecialchars($data['amount_new']) . "</p>"
+      . "<p>This change was made automatically by this contact using a special link to the civicrm/update-giving page.</p>";
+
+    $activityParams = [
+      'source_contact_id'  => $data['contact_id'],
+      'target_contact_id'  => [$data['contact_id']],
+      'activity_type_id'   => CRM_Core_PseudoConstant::getKey('CRM_Activity_BAO_Activity', 'activity_type_id', 'Update Recurring Contribution'),
+      'details'            => $message,
+      'activity_date_time' => date('YmdHis'),
+      'status_id'          => CRM_Core_PseudoConstant::getKey('CRM_Activity_BAO_Activity', 'activity_status_id', 'Completed'),
+    ];
+
+    if ($data['amount_old'] < $data['amount_new']) {
+      $activityParams['subject'] = "Increased giving $data[amount_old] to $data[amount_new]";
+    }
+    elseif ($data['amount_old'] > $data['amount_new']) {
+      $activityParams['subject'] = "Decreased giving $data[amount_old] to $data[amount_new]";
+    }
+    else {
+      $activityParams['subject'] = "Giving unchanged (strange?)";
+    }
+
+    // Would have preferred to use API but copied most of this code from CRM/Contribute/Form/UpdateSubscription.php
+    CRM_Activity_BAO_Activity::create($activityParams);
   }
 }
