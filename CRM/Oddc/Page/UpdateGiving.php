@@ -253,5 +253,13 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
 
     // Would have preferred to use API but copied most of this code from CRM/Contribute/Form/UpdateSubscription.php
     CRM_Activity_BAO_Activity::create($activityParams);
+
+    $params = [
+      'contact_id'          => $data['contact_id'],
+      'od_subject'          => $activityParams['subject'],
+      'od_message'          => $activityParams['details'] . ' You do not need to take any action, unless you want to thank them.',
+    ];
+    CRM_Oddc::sendStaffNotificationEmail($params);
+
   }
 }
