@@ -393,6 +393,7 @@ class CRM_Oddc {
       'payment_processor_id'   => $params['payment_processor_id'],
       'start_date'             => $subscription->start_date,
       'trxn_id'                => $subscription->id,
+      'processor_id'           => $subscription->id,
     ));
 
     // Create a pending Contribution record.
@@ -424,6 +425,7 @@ class CRM_Oddc {
 
     $this->upgradesActions($this->input);
 
+    $this->extractDataForAnalyticsToSession($this->input);
   }
   /**
    * Find or create CiviCRM contact.
@@ -544,6 +546,9 @@ class CRM_Oddc {
     $this->sendThankYouEmail($input);
 
     $this->upgradesActions($input);
+
+    $this->extractDataForAnalyticsToSession($input);
+
     // Clean up session data a bit as it is no longer needed.
     unset($_SESSION['oddc_paypal_contribs'][$input['contributionID']]);
 
@@ -640,7 +645,51 @@ class CRM_Oddc {
     return $result;
   }
   /**
+   * Send email to notify staff.
+   *
+   * N.b. to address is hard-coded to finance@opendemocracy.net
+   *
+   * Minimum input keys are:
+   * - contact_id
+   * - od_message: explanation of what to do
+   * - subject: explanation of what to do
+   *
+   * @param array $input
+   */
+  public static function sendStaffNotificationEmail($input) {
+    if (!($input['contact_id'] ?? 0 > 0)) {
+      Civi::log()->info("Oddc::sendStaffNotificationEmail. No contactID '$input[contact_id]'. Will not send email.", []);
+      return;
+    }
+
+    // Prepare extra vars for the smarty template.
+    $template_params = [];
+    $template_params['who'] = civicrm_api3('Contact', 'getvalue', ['return' => 'display_name', 'id' => $input['contact_id']]);
+    $template_params['contact_record_link'] = CRM_Utils_System::url('civicrm/contact/view', ['reset' => 1, 'cid' => $input['contact_id']], TRUE);
+    $template_params['od_message'] = $input['od_message'] ?? '(Missing! This is a bug!)';
+    $template_params['od_subject'] = $input['od_subject'] ?? '(Missing! This is a bug!)';
+
+    $from = CRM_Core_BAO_Domain::getNameAndEmail();
+    $params = [
+      'id'              => 85,
+      'template_params' => $template_params,
+      'from'            => $from[1],
+      'to_email'        => 'finance@opendemocracy.net',
+      'to_name'         => 'oD staff',
+    ];
+    Civi::log()->info("Oddc::sendStaffNotificationEmail. Sending:", $params);
+
+    $result = civicrm_api3('MessageTemplate', 'send', $params);
+    Civi::log()->info("Oddc::sendStaffNotificationEmail. Sent email.", ['result' => $result]);
+    return $result;
+  }
+  /**
    * On completion of setup of new regular giving,
+   *
+   * @param array $input keys that are relied upon:
+   * - contactID
+   * - contributionID
+   * - is_upgrade bool
    */
   public function upgradesActions($input) {
 
@@ -675,7 +724,45 @@ class CRM_Oddc {
       . '</p>'
       . "<p><strong>Note: all previous regular giving arrangements need to be cancelled, leaving only this latest one in place</strong></p>";
 
+    // Create the activity
     civicrm_api3('Activity', 'create', $activity_params);
+
+    $params = [
+      'contact_id'          => $input['contactID'],
+      'od_subject'          => $activity_params['subject'],
+      'od_message'          => $activity_params['details'],
+    ];
+    CRM_Oddc::sendStaffNotificationEmail($params);
+  }
+  /**
+   * Extract amount for Google Analytics.
+   *
+   * Saves to $_SESSION['oddc_analytics_data']
+   *
+   * @param array $input keys that are relied upon:
+   * - contactID
+   * - contributionID
+   */
+  public function extractDataForAnalyticsToSession($input) {
+
+    // Load contribution
+    $contribution = civicrm_api3('Contribution', 'getsingle', [
+      'id'     => $input['contributionID'],
+      'return' => ['total_amount', 'contribution_recur_id', 'note', 'financial_type_id']]);
+
+    $_SESSION['oddc_analytics_data'] = [
+      'id' => $input['contributionID'] ,
+      'currency' => $contribution['currency'],
+      'amount' => $contribution['total_amount'],
+    ];
+
+    if (!($contribution['contribution_recur_id'] ?? 0)) {
+      // One off
+    }
+    else {
+      // Regular - https://trello.com/c/d4SRFTVY/103-add-google-analytics-e-commerce-tracking-code-send-purchase-events-on-sale#comment-5e176a1f472de116e80a469e
+      $_SESSION['oddc_analytics_data']['amount'] = 300;
+    }
   }
   /**
    * Update total received on campaign targets.
@@ -796,10 +883,11 @@ class CRM_Oddc {
         ];
 
         if ($recur['frequency_interval'] > 1) {
-          $_['description'] = "$_[currencySymbol]$_[amount] every $recur[frequency_interval] $recur[frequency_unit]s to $_[entity]";
+          //$_['description'] = "$_[currencySymbol]$_[amount] every $recur[frequency_interval] $recur[frequency_unit]s to $_[entity]";
+          $_['description'] = "$_[currencySymbol]$_[amount] every $recur[frequency_interval] $recur[frequency_unit]s to openDemocracy";
         }
         else {
-          $_['description'] = "$_[currencySymbol]$_[amount] a $recur[frequency_unit] to $_[entity]";
+          $_['description'] = "$_[currencySymbol]$_[amount] a $recur[frequency_unit] to openDemocracy";
         }
 				if ($_['contribution_status'] === 'pending') {
 					$_['description'] .= " (not started yet)";
