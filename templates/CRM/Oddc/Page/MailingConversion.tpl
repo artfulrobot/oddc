@@ -30,5 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+<h2>Definitions</h2>
+<p>A Contact Conversion means an individual who made one or more donations linked to the mailing.</p>
+
 </script>
 {/literal}
