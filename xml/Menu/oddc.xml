@@ -12,4 +12,10 @@
     <title>UpdateGiving</title>
     <access_arguments>*always allow*</access_arguments>
   </item>
+  <item>
+    <path>civicrm/odmailingconversion</path>
+    <page_callback>CRM_Oddc_Page_MailingConversion</page_callback>
+    <title>MailingConversion</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
 </menu>

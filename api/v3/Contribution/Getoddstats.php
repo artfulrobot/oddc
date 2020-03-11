@@ -10,15 +10,16 @@ use CRM_Oddc_ExtensionUtil as E;
  * @see http://wiki.civicrm.org/confluence/display/CRMDOC/API+Architecture+Standards
  */
 function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
-  $spec['date_from'] = ['description' => 'Optional earliest date (not used by the report)'];
-  $spec['date_to'] = ['description' => 'Optional latest date (not used by the report)'];
-  $spec['granularity'] = ['description' => 'Date granularity (not used by the report - day used only)', 'options' => ['day', 'week', 'month', 'quarter', 'year'], 'default' => 'week'];
+  $spec['date_from']   = ['description' => 'Optional earliest date (not used by the report)'];                                                                                          
+  $spec['date_to']     = ['description' => 'Optional latest date (not used by the report)'];                                                                                            
+  $spec['granularity'] = ['description' => 'Date granularity (not used by the report - day used only)', 'options' => ['day', 'week', 'month', 'quarter', 'year'], 'default' => 'week']; 
 }
 
 /**
  * Contribution.Getoddstats API
  *
  * @param array $params
+ *
  * @return array API result descriptor
  * @see civicrm_api3_create_success
  * @see civicrm_api3_create_error
@@ -129,6 +130,8 @@ function civicrm_api3_contribution_Getoddstats($params) {
 
 
   $sql_params = [];
+  $completed_status = (int) CRM_Core_PseudoConstant::getKey('CRM_Contribute_BAO_Contribution', 'contribution_status_id', 'Completed');
+
   $sql = "SELECT
       $sql_display_format period,
       campaign_id,
@@ -149,7 +152,10 @@ function civicrm_api3_contribution_Getoddstats($params) {
       COUNT(*) contributions
     FROM civicrm_contribution cc
     LEFT JOIN `$table_name` proj ON proj.entity_id = cc.id
-    WHERE is_test = 0 $date_from_sql $date_to_sql
+    WHERE is_test = 0
+          AND cc.contribution_status_id = $completed_status
+          $date_from_sql
+          $date_to_sql
     GROUP BY $sql_date_format DESC, campaign_id, proj.`$project_field_name`, donation_page_nid, source, recur
   ";
   $dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
@@ -226,6 +232,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
     }
   }
 
+  /*
   // Load all mailings found in sources.
   $mailings = [];
   if ($mailing_ids) {
@@ -238,12 +245,13 @@ function civicrm_api3_contribution_Getoddstats($params) {
   }
   Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load mailings');
   $t = microtime(TRUE);
+   */
 
   // Create the source lookup data.
   $result['sources'] = [];
   foreach ($unique_sources as $name => $idx) {
-    // IF $name is a mailing.
-    if (isset($mailing_ids[$name]) && isset($mailings[$mailing_ids[$name]])) {
+    // IF $name is a mailing. REMOVED {{{
+    if (FALSE && isset($mailing_ids[$name]) && isset($mailings[$mailing_ids[$name]])) {
       // This is a mailing and we have been able to load it's name.
       $mailing_id = (int) $mailing_ids[$name];
       $mailing = $mailings[$mailing_id];
@@ -267,7 +275,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
       // Replace CiviCRM's opened_rate which is not unique opens and therefore pretty useless.
       $result['sources'][$idx]['opened_rate'] = number_format(100 * $result['sources'][$idx]['unique_opens'] / $result['sources'][$idx]['Delivered'], 2) . '%';
 
-    }
+    } // }}}
     else {
       // Not a mailing, just output the source name as is.
       $result['sources'][$idx] = [ 'name' => $name, ];

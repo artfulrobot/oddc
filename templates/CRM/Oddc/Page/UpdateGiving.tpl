@@ -21,6 +21,16 @@
   <p><button id="newAmountSubmit">Update my Direct Debit</button></p>
 
   <p id="donation-working"></p>
+  <div>
+    <p>Thank you – it really makes a difference. You increased regular donation will help us to:</p>
+    <ul>
+      <li>Invest more in digital and and physical security training, so our team can withstand increasing attacks.  </li>
+      <li>Scale up our legal defence budget, so we can stand firm in the face of expensive legal threats – from lobbyists, corporations or governments.</li>
+      <li>Commission more stories from brave reporters working in the toughest environments globally.</li>
+    </ul>
+
+    <p>We believe information should be free for everyone and free from the influence of companies or governments. That’s why we don’t have paywalls or advertising. But it means we rely on people like you contributing what you can to help fund our work.</p>
+  </div>
 
 </div>
 <div id="donation-success"></div>
