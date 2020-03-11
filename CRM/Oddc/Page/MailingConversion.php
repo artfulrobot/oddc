@@ -21,26 +21,44 @@ class CRM_Oddc_Page_MailingConversion extends CRM_Core_Page {
     $from = date('Ymd', $from);
 
     // mailing.id=773 is interesting: it includes 3 people who did not receive the mailing but who did donate!
+    //
+    // Calculating delivery is complicated:
+    // - you can count the delivery events
+    // - but you then have to remove the bounce events, since some bounces can come later.
+    //
+    // - also, there's the option of is_distinct on the queue id in CRM_Mailing_Event_BAO_Delivered which GROUPs BY it - unclear why!
+    // - also the CRM_Mailing_Event_BAO_Delivered uselessly joins the mailing table and uses left join for bounces which is probably inefficient.
+    //
+    // - in the end went back to using our own SQL for this.
     $sql = '
 SELECT mailing.id,
   MIN(mailing.approval_date) mailingDate,
   MIN(mailing.name) mailingName,
+  COUNT(DISTINCT queue.id) recipients,
   COUNT(DISTINCT contribution.contact_id) contactConversions,
+  COUNT(DISTINCT contribution.id) * 100 / COUNT(DISTINCT queue.id) contactConversionRate,
   COUNT(contribution.id) contributionConversions,
+  COUNT(contribution.id) * 100 / COUNT(DISTINCT queue.id) contributionConversionRate,
   SUM(contribution.total_amount) totalRaised
 FROM civicrm_mailing mailing
-INNER JOIN civicrm_mailing_job job ON mailing.id = job.mailing_id
+INNER JOIN civicrm_mailing_job job ON mailing.id = job.mailing_id AND job.is_test = 0
 INNER JOIN civicrm_mailing_event_queue queue ON job.id = queue.job_id
+INNER JOIN civicrm_mailing_event_delivered delivered ON queue.id = delivered.event_queue_id
 LEFT JOIN civicrm_contribution contribution ON queue.contact_id = contribution.contact_id
   AND contribution.contribution_status_id = 1
   AND contribution.is_test = 0
   AND contribution.source = CONCAT("mailing", mailing.id)
 WHERE mailing.approval_date > %1
+  AND NOT EXISTS (
+    SELECT queue.id
+    FROM civicrm_mailing_event_bounce bounce
+    WHERE bounce.event_queue_id = queue.id
+  )
 GROUP BY mailing.id
 ORDER BY mailing.approval_date DESC';
 
     $results = CRM_Core_DAO::executeQuery($sql, [1 => [$from, 'String']])->fetchAll();
-    foreach ($results as &$row) {
+    if (0) foreach ($results as &$row) {
       $stats = civicrm_api3('Mailing', 'stats', ['mailing_id' => $row['id']])['values'][$row['id']] ?? [];
       /* are these cached? NO THEY ARE NOT! and it's hideously slow.
         ⬦ $stats['Delivered'] = (string [4]) `2830`
