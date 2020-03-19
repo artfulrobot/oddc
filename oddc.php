@@ -232,16 +232,6 @@ function oddc_civicrm_post($op, $objectName, $objectId, &$objectRef) {
 }
 
 /**
- *
- * We pass everything in $input on in the callbacks since we can't guarantee session storage.
- *
- * https://developer.paypal.com/docs/classic/paypal-payments-standard/integration-guide/Appx_websitestandard_htmlvariables/#technical-variables
- *
- */
-function oddc__get_redirect_url($input) {
-  return CRM_Oddc::factory()->process($input);
-}
-/**
  * User has set up mandate at GC, complete this process and set up subscription.
  *
  */

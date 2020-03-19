@@ -34,11 +34,180 @@ class CRM_Oddc {
   }
 
   /**
-   * Process
+   * Process Signup request.
+   *
+   * Expects:
+   * - first_name
+   * - last_name
+   * - email
+   * - mailing_list (which is the ID to a mailing group)
+   * - nid
+   * And these (added from node data by oddd__add_page_details):
+   * - legal_entity
+   * - project
+   * - campaign
+   * - include_address
+   * - mailing_list
+   * - test_mode
+   * - is_upgrade
+   * - return_url (the URL to the signup page)
+   * - donation_page_nid
+   * - thanks_message_template_id
+   * - tweet
+   * - facebook
+   *
    */
-  public function process($input) {
+  public function processRequestSignup($input) {
     try {
-      $this->validate($input);
+      $this->validateSignup($input);
+      if (!empty($input['signature'])) {
+        return $this->doSignup();
+      }
+      else {
+        return ['signature' => $this->generateSignature()];
+      }
+    }
+    catch (CRM_Oddc_ValidationError $e) {
+      return ['error' => $e->getMessage(), 'user_error' => $e->getMessage()];
+    }
+    catch (Exception $e) {
+      return ['error' => 'Server problem: ' . $e->getMessage()];
+    }
+  }
+  /**
+   * Validate user input. Valid input is stored on $this->input
+   *
+   * @param array $input
+   * @throws CRM_Oddc_ValidationError
+   */
+  public function validateSignup($input) {
+    $this->input = [];
+    $this->extractValidEmail($input);
+    $this->extractValidSource($input);
+    $this->extractValidNames($input);
+    $this->extractTrustedData($input);
+    if (empty($input['mailing_list'])) {
+      throw new CRM_Oddc_ValidationError("Sorry this form is not configured correctly. err5");
+    }
+    $this->input['mailing_list_id'] = $input['mailing_list'];
+    $this->input['mailing_list_name'] = civicrm_api3('group', 'get', ['id' => $input['mailing_list'], 'return' => 'title', 'sequential' => 1])['values'][0]['title'] ?? '';;
+
+    if (empty($this->input['mailing_list_name'])) {
+      watchdog('odd', 'Failed to load mailing list for @id', ['@id' => $input['mailing_list']], WATCHDOG_ERROR);
+      throw new CRM_Oddc_ValidationError("Sorry this form is not configured correctly. err6");
+    }
+
+    if (array_key_exists('signature', $input)) {
+      // Signature must be valid.
+      $hash = $this->generateSignature();
+      if (hash_equals($hash, $input['signature'])) {
+        $this->input['signature'] = $input['signature'];
+      }
+      else {
+        throw new CRM_Oddc_ValidationError("Corrupted request, please try again. err7");
+      }
+    }
+  }
+  /**
+   * Generate signature.
+   */
+  public function generateSignature() {
+    ksort($this->input);
+    $hash = sha1(serialize($this->input) . 'let us hope this is secret');
+    return $hash;
+  }
+  /**
+   * Called once data has been validated and stored in $this->input.
+   *
+   * This is only called when consent is given.
+   *
+   * - create/find contact
+   * - create consent activity
+   * - add to the mailing_list_id specified in input.
+   *
+   * @return array
+   *    { success: 1, contact_id: (int) }
+   */
+  public function doSignup() {
+
+    // Store name, email.
+    $this->getOrCreateContact();
+
+    // Create an activity.
+    $consent_activity_type_id = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"])['values'][0]['value'] ?? 0;
+
+    civicrm_api3('Activity', 'create', [
+      'source_contact_id'  => $this->contact_id,
+      'activity_type_id'   => $consent_activity_type_id,
+      'target_id'          => $this->contact_id,
+      'subject'            => 'Gave consent on signup page',
+      'location'           => 'node/' . $this->input['donation_page_nid'] . ' ' . $this->input['source'],
+      'details'            => '<p>Donation page at '
+      . htmlspecialchars($this->input['return_url'] ?? '')
+      . '</p>'
+      . '<p>Group: #' . $this->input['mailing_list_id'] . ' '
+      . htmlspecialchars($this->input['mailing_list_name']) . '</p>',
+      'status_id'          => 'Completed',
+      'activity_date_time' => date('Y-m-d H:i:s'),
+    ]);
+
+    // Add the contact to the list.
+    $contact_ids = [$this->contact_id];
+    CRM_Contact_BAO_GroupContact::addContactsToGroup($contact_ids, $this->input['mailing_list_id']);
+
+    return ['success' => 1, 'contact_id' => $this->contact_id];
+  }
+  /**
+   * Stores valid data on $this->input.
+   *
+   * @throws CRM_Oddc_ValidationError
+   */
+  public function extractValidSource($input) {
+    $this->input['source'] = preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#-]+/', '-', $query['input'] ?? '');
+  }
+  /**
+   * Stores valid data on $this->input.
+   *
+   * @throws CRM_Oddc_ValidationError
+   */
+  public function extractTrustedData($input) {
+    foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list', 'donation_page_nid'] as $_) {
+      $this->input[$_] = $input[$_];
+    }
+  }
+  /**
+   * Stores valid data on $this->input.
+   *
+   * @throws CRM_Oddc_ValidationError
+   */
+  public function extractValidNames($input) {
+    // Check we have names.
+    foreach (['first_name', 'last_name'] as $_) {
+      $v = trim($input[$_] ?? '');
+      if (!$v) {
+        throw new CRM_Oddc_ValidationError("Missing $_");
+      }
+      $this->input[$_] = $input[$_];
+    }
+  }
+  /**
+   * Stores valid data on $this->input.
+   *
+   * @throws CRM_Oddc_ValidationError
+   */
+  public function extractValidEmail($input) {
+    // Validate email.
+    if (!preg_match('/[^@ <>"]+@[a-z0-9A-Z_-]+\.[a-z0-9A-Z_.-]+$/', $input['email'])) {
+      throw new CRM_Oddc_ValidationError("The email address is invalid");
+    }
+    $this->input['email'] = $input['email'];
+  }
+  /**
+   * Process Donation request.
+   */
+  public function processRequestDonation($input) {
+    try {
+      $this->validateDonation($input);
       return $this->routeToPaymentProcessor();
     }
     catch (CRM_Oddc_ValidationError $e) {
@@ -49,24 +218,31 @@ class CRM_Oddc {
     }
   }
   /**
-   * Validate user input.
+   * Validate user input. Valid input is stored on $this->input
+   *
+   * @throws CRM_Oddc_ValidationError
    */
-  public function validate($input) {
+  public function validateDonation($input) {
 
-    // Leave $input as is, but clean it up into $params.
-    $params['is_recur'] = (!empty($input['is_recur'])) ? 1: 0;
+    $this->input = [];
+    $this->extractValidEmail($input);
+    $this->extractValidSource($input);
+    $this->extractValidNames($input);
+    $this->extractTrustedData($input);
+
+    $this->input['is_recur'] = (!empty($input['is_recur'])) ? 1: 0;
 
     // Validate geo country name.
     if (!preg_match('/^[A-Z]{2,3}$/', $input['geo'] ?? '')) {
       throw new CRM_Oddc_ValidationError("Invalid country.");
     }
-    $params['geo'] = $input['geo'];
+    $this->input['geo'] = $input['geo'];
 
     // Validate currency.
     if (!preg_match('/^(GBP|USD|EUR)$/', $input['currency'] ?? '')) {
       throw new CRM_Oddc_ValidationError("Invalid currency.");
     }
-    $params['currency'] = $input['currency'];
+    $this->input['currency'] = $input['currency'];
 
     // Validate amount.
     if (!preg_match('/^\d{1,4}(?:\.\d\d)?$/', $input['amount'] ?? '')) {
@@ -75,46 +251,22 @@ class CRM_Oddc {
     if ($input['amount'] < 1) {
       throw new CRM_Oddc_ValidationError("Minimum amount is 1.00");
     }
-    $params['amount'] = $input['amount'];
-
-    // Validate email.
-    if (!preg_match('/[^@ <>"]+@[a-z0-9A-Z_-]+\.[a-z0-9A-Z_.-]+$/', $input['email'])) {
-      throw new CRM_Oddc_ValidationError("The email address is invalid");
-    }
-    $params['email'] = $input['email'];
-
-    // Check we have names.
-    foreach (['first_name', 'last_name'] as $_) {
-      $v = trim($input[$_] ?? '');
-      if (!$v) {
-        throw new CRM_Oddc_ValidationError("Missing $_");
-      }
-      $params[$_] = $input[$_];
-    }
+    $this->input['amount'] = $input['amount'];
 
     // Booleans
     foreach (['test_mode', 'giftaid', 'consent', 'include_address'] as $_) {
-      $params[$_] = empty($input[$_]) ? 0 : 1;
-    }
-
-    // Things we trust.
-    foreach (['return_url', 'campaign', 'project', 'legal_entity', 'mailing_list', 'donation_page_nid'] as $_) {
-      $params[$_] = $input[$_];
+      $this->input[$_] = empty($input[$_]) ? 0 : 1;
     }
 
     // Set financial type based on legal entity.
-    $params['financial_type_id'] = $this->financial_type_map[$input['legal_entity']];
-
-    // Source has come on query string, just check it does not have anything too weird in it.
-    $params['source'] = preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#-]+/', '-', $input['source']);
+    $this->input['financial_type_id'] = $this->financial_type_map[$input['legal_entity']];
 
     // Copy other user data as is.
     foreach (['street_address', 'city', 'postal_code', 'country'] as $_) {
-      $params[$_] = $input[$_] ?? '';
+      $this->input[$_] = $input[$_] ?? '';
     }
-
-    $this->input = $params;
   }
+
   /**
    * Business logic for choosing the payment processor to use.
    *
@@ -143,6 +295,7 @@ class CRM_Oddc {
     $this->payment_processor = Civi\Payment\System::singleton()->getByProcessor($processor);
 
     $this->getOrCreateContact();
+    $this->processCommonDonationContactData();
 
     $method = "process$method";
     return $this->$method();
@@ -457,6 +610,11 @@ class CRM_Oddc {
       }
     }
     $this->contact_id = $contact['id'];
+  }
+  /**
+   * Store data common to PayPal and GoCardless donation requests.
+   */
+  public function processCommonDonationContactData() {
 
     // Store Gift Aid
     if (!empty($this->input['giftaid'])
@@ -488,22 +646,21 @@ class CRM_Oddc {
 
       if ($mailing_list_name && !empty($this->input['consent'])) {
         // Create an activity.
-        $consent_activity = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"]);
+        $consent_activity_type_id = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"])['values'][0]['value'] ?? 0;
 
-        if (!empty($consent_activity['values'][0]['value'])) {
-          civicrm_api3('Activity', 'create', [
-            'source_contact_id'  => $this->contact_id,
-            'activity_type_id'   => $consent_activity['values'][0]['value'],
-            'target_id'          => $this->contact_id,
-            'subject'            => 'Gave consent at time of making donation.',
-            'details'            => '<p>Donation page at '
-                                    . htmlspecialchars($this->input['return_url'])
-                                    . '</p>'
-                                    . '<p>Group: #' . $this->input['mailing_list'] . ' '
-                                    . htmlspecialchars($mailing_list_name) . '</p>',
-            'status_id'          => 'Completed',
-            'activity_date_time' => date('Y-m-d H:i:s'),
-          ]);
+        civicrm_api3('Activity', 'create', [
+          'source_contact_id'  => $this->contact_id,
+          'activity_type_id'   => $consent_activity_type_id,
+          'target_id'          => $this->contact_id,
+          'subject'            => 'Gave consent at time of making donation.',
+          'details'            => '<p>Donation page at '
+          . htmlspecialchars($this->input['return_url'])
+          . '</p>'
+          . '<p>Group: #' . $this->input['mailing_list'] . ' '
+          . htmlspecialchars($mailing_list_name) . '</p>',
+          'status_id'          => 'Completed',
+          'activity_date_time' => date('Y-m-d H:i:s'),
+        ]);
         }
 
         // Add the contact to the list.
@@ -511,7 +668,6 @@ class CRM_Oddc {
         CRM_Contact_BAO_GroupContact::addContactsToGroup($contact_ids, $this->input['mailing_list']);
       }
     }
-  }
   /**
    * PayPal user clicked Return To Merchant after making payment.
    */
