@@ -95,7 +95,9 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
     if (!$selected_list_ids) {
       return 0;
     }
-    $sql = "SELECT SQL_NO_CACHE COUNT(*)
+    // This does not remove people who have been removed manually
+    // No: it doesn't need to cos they won't have been added into cache
+    $sql = "SELECT /*SQL_NO_CACHE*/ COUNT(*)
     FROM (
             SELECT DISTINCT contact_id FROM (
               SELECT DISTINCT gc.contact_id
@@ -139,7 +141,10 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
           WHERE gc.group_id IN ($selected_list_ids)
                 AND status = 'Added'
                 AND gc.contact_id NOT IN (
-                  SELECT id FROM civicrm_contact WHERE is_deleted = 1)
+                  SELECT id
+                  FROM civicrm_contact
+                  WHERE is_deleted = 1 OR do_not_email = 1 OR is_opt_out = 1
+                )
 
           UNION ALL
           SELECT contact_id, group_id
