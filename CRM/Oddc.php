@@ -919,6 +919,7 @@ class CRM_Oddc {
       // Regular - https://trello.com/c/d4SRFTVY/103-add-google-analytics-e-commerce-tracking-code-send-purchase-events-on-sale#comment-5e176a1f472de116e80a469e
       $_SESSION['oddc_analytics_data']['amount'] = 300;
     }
+    Civi::log()->debug("Oddc::extractDataForAnalyticsToSession", ['input' => $input, 'contribution' => $contribution, 'output(session)' => $_SESSION['oddc_analytics_data']]);
   }
   /**
    * Update total received on campaign targets.
