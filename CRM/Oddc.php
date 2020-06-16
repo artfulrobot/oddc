@@ -42,6 +42,7 @@ class CRM_Oddc {
    * - email
    * - mailing_list (which is the ID to a mailing group)
    * - nid
+   * - source
    * And these (added from node data by oddd__add_page_details):
    * - legal_entity
    * - project
@@ -163,7 +164,7 @@ class CRM_Oddc {
    * @throws CRM_Oddc_ValidationError
    */
   public function extractValidSource($input) {
-    $this->input['source'] = preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#-]+/', '-', $query['input'] ?? '');
+    $this->input['source'] = static::filterSource($input['source'] ?? '');
   }
   /**
    * Stores valid data on $this->input.
@@ -1080,5 +1081,14 @@ class CRM_Oddc {
         . implode(' and ', array_column($giving, 'description')) . '.';
     }
     return $description;
+  }
+  /**
+   * This is for the purpose of centralising the regex.
+   *
+   * @param string $source
+   * @return string filtered source.
+   */
+  public static function filterSource($source) {
+    return preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#| -]+/', '-', $source ?? '');
   }
 }
