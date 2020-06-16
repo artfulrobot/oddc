@@ -10,6 +10,13 @@ use CRM_Oddc_ExtensionUtil as E;
  */
 function oddc_civicrm_config(&$config) {
   _oddc_civix_civicrm_config($config);
+
+  // Prevent us registering 2+ times.
+  if (isset(Civi::$statics[__FUNCTION__])) {
+    return;
+  }
+  Civi::$statics[__FUNCTION__] = 1;
+  Civi::dispatcher()->addListener(Civi\API\Events::RESPOND, 'oddc__wrap_mailing_preview');
 }
 
 /**
@@ -455,3 +462,9 @@ function oddc_civicrm_tokenValues(&$values, $cids, $job = null, $tokens = array(
   }
 }
 
+/**
+ * @param \Civi\API\Event\RespondEvent $e
+ */
+function oddc__wrap_mailing_preview($event) {
+
+}
