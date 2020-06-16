@@ -466,5 +466,14 @@ function oddc_civicrm_tokenValues(&$values, $cids, $job = null, $tokens = array(
  * @param \Civi\API\Event\RespondEvent $e
  */
 function oddc__wrap_mailing_preview($event) {
+  $apiRequest = $event->getApiRequest();
+  if ($apiRequest['entity'] !== 'Mailing'
+    || $apiRequest['action'] !== 'preview') {
+    return;
+  }
+  $apiResponse = $event->getResponse();
 
+  // Replace the main visible tokens.
+  $apiResponse['values']['body_html'] = preg_replace('/{dearyou.*?}/', 'Dear Supporter', $apiResponse['values']['body_html']);
+  $event->setResponse($apiResponse);
 }
