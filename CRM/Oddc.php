@@ -1091,4 +1091,49 @@ class CRM_Oddc {
   public static function filterSource($source) {
     return preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#| -]+/', '-', $source ?? '');
   }
+  /**
+   * @param Array
+   *    Array of integer nids.
+   * @param NULL|string
+   *
+   * @return Array
+   *    Keyed by 'A' and 'B' with array values which have keys: nid, count, sum
+   */
+  public static function getAbStats($nids, $startTimestamp=NULL) {
+
+    $andIsAfterStartTime = $startTimestamp ? "AND c.receive_date >= %3" : '';
+
+    $sql = "SELECT donation_page_nid_69 nid, COUNT(*) `count`, SUM(total_amount) `sum`
+      FROM civicrm_value_od_project_30 winner
+      INNER JOIN civicrm_contribution c ON winner.entity_id = c.id
+      WHERE winner.donation_page_nid_69 IN (%1, %2)
+            $andIsAfterStartTime
+      GROUP BY winner.donation_page_nid_69";
+    $params = [
+      1 => [$nids[0], 'Integer'],
+      2 => [$nids[1], 'Integer'],
+    ];
+    if ($startTimestamp) {
+      $params[3] = [$startTimestamp, 'Timestamp'];
+    }
+    $results = [
+      'updated' => date('Y-m-d H:i:s'),
+      'A' => ['nid' => $nids[0], 'count' => 0, 'sum' => 0],
+      'B' => ['nid' => $nids[1], 'count' => 0, 'sum' => 0],
+    ];
+    $dao = CRM_Core_DAO::executeQuery($sql, $params);
+    while ($dao->fetch()) {
+      if ($dao->nid == $nids[0]) {
+        $results['A'] = $dao->toArray();
+      }
+      elseif ($dao->nid == $nids[1]) {
+        $results['B'] = $dao->toArray();
+      }
+      else {
+        throw new \Exception("Unexpected nid value '$dao->nid' is neither of " . json_encode($nids));
+      }
+    }
+    return $results;
+
+  }
 }
