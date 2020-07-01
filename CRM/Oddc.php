@@ -1103,18 +1103,33 @@ class CRM_Oddc {
 
     $andIsAfterStartTime = $startTimestamp ? "AND c.receive_date >= %3" : '';
 
+    // We count completed contributions, plus those pending ones where the
+    // recur record is In Progress - that should include the initial GoCardless
+    // contributions.
+    $pendingContribStatus = 2;
+    $inProgressContribRecurStatus = 5;
+    $completedContribStatus = 1;
+    $gcPaymentProcessorIds = '9, 17';
+
     $sql = "SELECT donation_page_nid_69 nid, COUNT(*) `count`, SUM(total_amount) `sum`
       FROM civicrm_value_od_project_30 winner
       INNER JOIN civicrm_contribution c ON winner.entity_id = c.id
+      LEFT JOIN civicrm_contribution_recur cr ON c.contribution_recur_id = c.id
       WHERE winner.donation_page_nid_69 IN (%1, %2)
+            AND c.is_test = 0
             $andIsAfterStartTime
+            AND (c.contribution_status_id = $completedContribStatus OR (
+              c.contribution_status_id = $pendingContribStatus
+              AND cr.contribution_status_id = $inProgressContribRecurStatus
+              AND cr.payment_processor_id IN ($gcPaymentProcessorIds)
+            ))
       GROUP BY winner.donation_page_nid_69";
     $params = [
       1 => [$nids[0], 'Integer'],
       2 => [$nids[1], 'Integer'],
     ];
     if ($startTimestamp) {
-      $params[3] = [$startTimestamp, 'Timestamp'];
+      $params[3] = [date('YmdHis', strtotime($startTimestamp)), 'Timestamp'];
     }
     $results = [
       'updated' => date('Y-m-d H:i:s'),
