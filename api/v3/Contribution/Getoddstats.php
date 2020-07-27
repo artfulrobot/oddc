@@ -143,6 +143,7 @@ function civicrm_api3_contribution_Getoddstats($params) {
         IF (EXISTS (
             SELECT id FROM civicrm_contribution cc_first
             WHERE cc.contribution_recur_id = cc_first.contribution_recur_id
+              AND cc_first.contribution_status_id = $completed_status
               AND cc_first.id < cc.id
           ),
         'repeat',
