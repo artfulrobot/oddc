@@ -358,6 +358,7 @@ function _oddStats2($params) {
   // Per month.
   $s = new CRM_Oddc_Stats();
   $months = $s->getMonthDates('today - 1 year');
+  //$months = $s->getMonthDates('today - 1 month');
   foreach ($months as $month) {
     $s->setStartDate($month[0])->setEndDate($month[1]);
     $monthStats = $s->getStats([
@@ -367,6 +368,9 @@ function _oddStats2($params) {
       'RegularRecruitmentAnnual',
       'RegularRecruitmentMonthly',
       'OneOffDonors',
+      'OneOffSpecial',
+      'OneOffYearToDate',
+      'Target',
     ], TRUE);
     $monthStats['period'] = $month;
     $result[] = $monthStats;

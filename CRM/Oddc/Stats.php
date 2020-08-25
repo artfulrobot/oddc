@@ -247,7 +247,7 @@ GROUP BY source WITH ROLLUP
    *
    * @param DateTimeImmutable
    */
-  public function retentionRates(DateTimeImmutable $referenceMonthStartDateTime) {
+  protected function retentionRates(DateTimeImmutable $referenceMonthStartDateTime) {
 
     if (!$this->startDate) {
       throw BadMethodCallException("Need startDate for calcStatRegularRetentionAnnual");
@@ -456,6 +456,104 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
         'monthlyRecruitmentPercent' => NULL,
       ];
     }
+  }
+
+  /**
+   *
+   */
+  public function calcStatOneOffSpecial() {
+
+    $sql = "
+WITH thisMonthsDonors AS (
+  SELECT
+    contact_id
+  FROM civicrm_contribution cc
+  WHERE receive_date >= $this->startDate AND receive_date <= $this->endDate
+  AND is_test=0
+  AND contribution_status_id = 1
+  AND contribution_recur_id IS NULL
+  GROUP BY contact_id
+),
+previousGiving AS (
+  SELECT contact_id,
+    COUNT(id) totalContribs,
+    SUM(contribution_recur_id IS NULL) totalOneOffs
+  FROM civicrm_contribution
+  WHERE receive_date < $this->startDate
+  AND is_test=0
+  AND contribution_status_id = 1
+  GROUP BY contact_id
+)
+
+SELECT
+  SUM(previousGiving.totalContribs IS NULL) AS oneOffDonors1st,
+  SUM(previousGiving.totalOneOffs > 0) AS oneOffDonorsRepeat,
+  SUM(previousGiving.totalOneOffs = 1) AS oneOffDonors2nd,
+  SUM(previousGiving.totalOneOffs = 2) AS oneOffDonors3rd,
+  SUM(previousGiving.totalOneOffs = 3) AS oneOffDonors4th,
+  SUM(previousGiving.totalOneOffs > 3) AS oneOffDonors5OrMore,
+  SUM(previousGiving.totalContribs > 0 AND previousGiving.totalOneOffs = 0) AS oneOffsFromRegularDonor
+FROM thisMonthsDonors
+LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact_id
+";
+
+    $dao = CRM_Core_DAO::executeQuery($sql);
+    if ($dao->fetch()) {
+      return $dao->toArray();
+    }
+    return [
+      'oneOffDonorsRepeat' => 0,
+      'oneOffDonors1st' => 0,
+      'oneOffDonors2nd' => 0,
+      'oneOffDonors3rd' => 0,
+      'oneOffDonors4th' => 0,
+      'oneOffDonors5OrMore' => 0,
+      'oneOffsFromRegularDonor' => 0,
+    ];
+  }
+
+  /**
+   * Year to date from one offs.
+   */
+  public function calcStatOneOffYearToDate() {
+
+    $startOfYear = date('Y') . '0101000000';
+    $sql = "
+      SELECT SUM(total_amount) oneOffYearToDate
+      FROM civicrm_contribution cc
+      WHERE receive_date >= $startOfYear
+      AND is_test=0
+      AND contribution_status_id = 1
+      AND contribution_recur_id IS NULL
+    ";
+
+    return CRM_Core_DAO::singleValueQuery($sql);
+  }
+
+  /**
+   * Target
+   *
+   */
+  public function calcStatTarget() {
+
+    $sql = "
+      SELECT ROUND(SUM(total_amount)/ 500000 * 100) targetPercent,
+             ROUND(SUM((contribution_recur_id IS NOT NULL) * total_amount)/ 500000 * 100) targetPercentRegular
+      FROM civicrm_contribution cc
+      WHERE receive_date >= $this->endDate - INTERVAL 1 YEAR
+          AND receive_date <= $this->endDate
+      AND is_test=0
+      AND contribution_status_id = 1
+    ";
+    $dao = CRM_Core_DAO::executeQuery($sql);
+    if ($dao->fetch()) {
+      return $dao->toArray();
+    }
+    return [
+      'targetPercent' => 0,
+      'targetPercentRegular' => 0,
+    ];
+
   }
 
 }
