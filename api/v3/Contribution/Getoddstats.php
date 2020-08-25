@@ -26,6 +26,27 @@ function _civicrm_api3_contribution_Getoddstats_spec(&$spec) {
  * @throws API_Exception
  */
 function civicrm_api3_contribution_Getoddstats($params) {
+
+  $set = $params['stats_set'] ?? 1;
+  if ($set == 1) {
+    return _oddStats1($params);
+  }
+  elseif ($set == 2) {
+    return _oddStats2($params);
+  }
+  throw new API_Exception("Invalid 'stats_set'");
+}
+/**
+ * Contribution.Getoddstats API
+ *
+ * @param array $params
+ *
+ * @return array API result descriptor
+ * @see civicrm_api3_create_success
+ * @see civicrm_api3_create_error
+ * @throws API_Exception
+ */
+function _oddStats1($params) {
   $result = [ ];
   $t = microtime(TRUE);
 
@@ -316,6 +337,40 @@ function civicrm_api3_contribution_Getoddstats($params) {
   $result['recur'] = array_values($result['recur']);
   Civi::log()->info('Took ' . number_format(microtime(TRUE) - $t, 2) . 's to load joiners/leavers');
 
+
+  return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');
+  //throw new API_Exception(/*errorMessage*/ 'Everyone knows that the magicword is "sesame"', /*errorCode*/ 1234);
+}
+/**
+ * Contribution.Getoddstats API
+ *
+ * @param array $params
+ *
+ * @return array API result descriptor
+ * @see civicrm_api3_create_success
+ * @see civicrm_api3_create_error
+ * @throws API_Exception
+ */
+function _oddStats2($params) {
+  $result = [];
+  $t = microtime(TRUE);
+
+  // Per month.
+  $s = new CRM_Oddc_Stats();
+  $months = $s->getMonthDates('today - 1 year');
+  foreach ($months as $month) {
+    $s->setStartDate($month[0])->setEndDate($month[1]);
+    $monthStats = $s->getStats([
+      'RegularDonors',
+      'RegularRetentionAnnual',
+      'RegularRetentionMonthly',
+      'RegularRecruitmentAnnual',
+      'RegularRecruitmentMonthly',
+      'OneOffDonors',
+    ], TRUE);
+    $monthStats['period'] = $month;
+    $result[] = $monthStats;
+  }
 
   return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');
   //throw new API_Exception(/*errorMessage*/ 'Everyone knows that the magicword is "sesame"', /*errorCode*/ 1234);
