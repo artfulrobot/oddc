@@ -1089,7 +1089,7 @@ class CRM_Oddc {
    * @return string filtered source.
    */
   public static function filterSource($source) {
-    return preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#| -]+/', '-', $source ?? '');
+    return preg_replace('/[^a-zA-Z0-9_,.!%£$()?@#| \/:;-]+/', '-', $source ?? '');
   }
   /**
    * @param Array
