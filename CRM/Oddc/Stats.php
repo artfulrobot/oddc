@@ -1,50 +1,23 @@
 <?php
 
 class CRM_Oddc_Stats {
-  public $startDate;
-  public $endDate;
-  public $startDateTime;
-  public $endDateTime;
   /** @var Redis|NULL */
   public $redis;
 
   public function __construct($startDate = NULL, $endDate = NULL) {
 
+    return;
     $this->setStartDate($startDate)->setEndDate($endDate);
 
     // See if we have Redis available.
     if (class_exists('Redis')) {
       $r = new Redis();
       if ($r->connect('/run/redis/redis.sock')) {
-        if ($r->ping() !== '+PONG') {
+        if ($r->ping()) {
           $this->redis = $r;
         }
       }
     }
-  }
-
-  public function setStartDate($date) {
-    if (!$date) {
-      $this->startDate = NULL;
-      $this->startDateTime = NULL;
-    }
-    else {
-      $this->startDateTime = new DateTimeImmutable($date);
-      $this->startDate = $this->startDateTime->format('YmdHis');
-    }
-    return $this;
-  }
-
-  public function setEndDate($date) {
-    if (!$date) {
-      $this->endDate = NULL;
-      $this->endDateTime = NULL;
-    }
-    else {
-      $this->endDateTime = new DateTimeImmutable($date);
-      $this->endDate = $this->endDateTime->format('YmdHis');
-    }
-    return $this;
   }
 
   /**
@@ -96,13 +69,19 @@ class CRM_Oddc_Stats {
       }
     }
 
-    ksort($stats);
     foreach ($stats as &$_) {
       if ($_ !== NULL) {
         $_ = (float) $_;
       }
     }
     unset($_);
+
+    // Meta stats
+    if (!empty($stats['churnPercent']) && !empty($stats['regularDonorIncome'])) {
+      // Just an alias
+    }
+
+    ksort($stats);
     return $stats;
   }
   /**
@@ -127,23 +106,247 @@ class CRM_Oddc_Stats {
     }
     return $months;
   }
+}
+
+class Statx {
+  /**
+   * @var Array
+   */
+  public $params = [];
+
+  protected $statProviderIndex = [];
+  public $providers = [
+    'StatXGeneric' => [
+      'params' => ['startDate', 'endDate'],
+      'methods' => [
+        'calcStatOneOffDonors' => [
+          'depends' => [],
+          'provides' => [
+            'oneOffDonorCount', 'oneOffDonorIncome', 'oneOffDonorAvgAmount',
+            'oneOffDonorCountSourceOther', 'oneOffDonorIncomeSourceOther', 'oneOffDonorAvgAmountSourceOther',
+            'oneOffDonorCountSourceSocial', 'oneOffDonorIncomeSourceSocial', 'oneOffDonorAvgAmountSourceSocial',
+            'oneOffDonorCountSourceWebsite', 'oneOffDonorIncomeSourceWebsite', 'oneOffDonorAvgAmountSourceWebsite',
+            'oneOffDonorCountSourceEmail', 'oneOffDonorIncomeSourceEmail', 'oneOffDonorAvgAmountSourceEmail',
+          ],
+        ],
+        'calcStatRegularDonors' => [
+          'depends' => [],
+          'provides' => [
+            'regularDonorCount', 'regularDonorIncome', 'regularDonorAvgAmount',
+            'regularDonorCountSourceOther', 'regularDonorIncomeSourceOther', 'regularDonorAvgAmountSourceOther',
+            'regularDonorCountSourceSocial', 'regularDonorIncomeSourceSocial', 'regularDonorAvgAmountSourceSocial',
+            'regularDonorCountSourceWebsite', 'regularDonorIncomeSourceWebsite', 'regularDonorAvgAmountSourceWebsite',
+            'regularDonorCountSourceEmail', 'regularDonorIncomeSourceEmail', 'regularDonorAvgAmountSourceEmail',
+          ],
+        ],
+        'calcStatRegularRetentionAnnual' => [
+          'depends' => [],
+          'provides' => [
+            'annualRetainedRegularDonorsCount',
+            'annualRetainedRegularDonorsPercent',
+            'annualPreviousRegularDonorsCount',
+          ],
+        ],
+        'calcStatRegularRetentionMonthly' => [
+          'depends' => [],
+          'provides' => [
+            'monthlyRetainedRegularDonorsCount',
+            'monthlyRetainedRegularDonorsPercent',
+            'monthlyPreviousRegularDonorsCount',
+            'churnPercent',
+          ],
+        ],
+        'calcStatRegularRecruitmentAnnual' => [
+          'depends' => [],
+          'provides' => [
+            'annualNewDonors',
+            'annualOldDonors',
+            'annualRecruitmentPercent',
+          ],
+        ],
+        'calcStatRegularRecruitmentMonthly' => [
+          'depends' => [],
+          'provides' => [
+            'monthlyNewDonors',
+            'monthlyOldDonors',
+            'monthlyRecruitmentPercent',
+          ],
+        ],
+        'calcStatOneOffSpecial' => [
+          'depends' => [],
+          'provides' => [
+            'oneOffDonorsRepeat',
+            'oneOffDonors1st',
+            'oneOffDonors2nd',
+            'oneOffDonors3rd',
+            'oneOffDonors4th',
+            'oneOffDonors5OrMore',
+            'oneOffsFromRegularDonor',
+          ],
+        ],
+        'calcStatMarketing' => [
+          'depends' => [
+            'regularDonorIncome',
+            'regularDonorCount',
+            'churnPercent',
+          ],
+          'provides' => [ 'MRR', 'ARR', 'ARPU', 'LTV' ]
+        ]
+      ],
+    ],
+  ];
+  /**
+   * @var array of provider objects.
+   */
+  protected $singletons = [];
+
+  /**
+   * @var Array cache of calculated stats.
+   */
+  public $outputs = [];
+
+  /**
+   */
+  public function __construct($params = []) {
+    $this->params = $params;
+
+    // @todo hook to let others add defintions.
+
+    // Index the stats.
+    foreach ($this->providers as $providerClass => $providerDetails) {
+      foreach ($providerDetails['methods'] as $methodName => $methodDetails) {
+        foreach ($methodDetails['provides'] as $stat) {
+          $this->statProviderIndex[$stat] = [$providerClass, $methodName];
+        }
+      }
+    }
+  }
+
+  /**
+   * Calculate a set of required stats.
+   */
+  public function get($stats) {
+    return $this->runStats($stats)->outputs;
+  }
+  /**
+   * Recursively get stats
+   *
+   * @var array $stats stat names
+   * @var array $list (used internally)
+   *
+   * @return Statx
+   */
+  public function runStats($stats) {
+
+    foreach ($stats as $statName) {
+
+      $provider = $this->statProviderIndex[$statName] ?? NULL;
+      if (!$provider) {
+        throw new \InvalidArgumentException("'$statName' has no registered provider.");
+      }
+
+      // Do we have one of these objects?
+      $providerClass = $provider[0];
+      $providerMethod = $provider[1];
+      $providerDetails = $this->providers[$providerClass];
+      if (!isset($this->singletons[$providerClass])) {
+        $args = [$this];
+        foreach ($providerDetails['params'] ?? [] as $input) {
+          $args[] = $this->getParam($input);
+        }
+        $this->singletons[$providerClass] = new $providerClass(...$args);
+      }
+
+      $methodDetails = $providerDetails['methods'][$providerMethod];
+      // Depth-first, see if there are dependencies.
+      if (!empty($methodDetails['depends'])) {
+        $this->runStats($methodDetails['depends']);
+      }
+      // All dependencies met.
+
+      // Has the stat already been calculated (e.g. one method that provides several)
+      if (!isset($this->outputs[$statName])) {
+        // Calc stats.
+        $this->singletons[$providerClass]->$providerMethod();
+      }
+    }
+
+    return $this;
+  }
+
+  public function getParam($name, $default=NULL) {
+    return $this->params[$name] ?? $default;
+  }
+  public function getOutput($name) {
+    return $this->outputs[$name];
+  }
+  public function setOutput($name, $value) {
+    $this->outputs[$name] = $value;
+  }
+  public function setOutputs($keyValuePairs) {
+    $this->outputs = array_merge($this->outputs, $keyValuePairs);
+  }
+}
+
+class StatXGeneric {
+  public $startDate;
+  public $endDate;
+  public $startDateTime;
+  public $endDateTime;
+
+
+  public $statx;
+
+  public function __construct($statx, $start, $end) {
+    $this->statx = $statx;
+    $this->setStartDate($start)->setEndDate($end);
+  }
+  public function setStartDate($date) {
+    if (!$date) {
+      $this->startDate = NULL;
+      $this->startDateTime = NULL;
+    }
+    else {
+      $this->startDateTime = new DateTimeImmutable($date);
+      $this->startDate = $this->startDateTime->format('YmdHis');
+    }
+    return $this;
+  }
+
+  public function setEndDate($date) {
+    if (!$date) {
+      $this->endDate = NULL;
+      $this->endDateTime = NULL;
+    }
+    else {
+      $this->endDateTime = new DateTimeImmutable($date);
+      $this->endDate = $this->endDateTime->format('YmdHis');
+    }
+    return $this;
+  }
+
+
   /**
    * How many donors making regular donations did we have in the period?
+   *
+   * This is MMR, assuming the period specified is a month.
    */
   public function calcStatRegularDonors() {
-    return $this->basic(TRUE);
+    $this->statx->setOutputs($this->basic(TRUE));
   }
 
   /**
    * How many donors making non-regulr donations did we have in the period?
    */
-  public function calcStatOneOffDonors() {
-    return $this->basic(FALSE);
+  public function calcStatOneOffDonors($obj) {
+    $this->statx->setOutputs($this->basic(FALSE));
   }
 
   /**
    * How many donors making non-regulr donations did we have in the period?
    * @param bool $is_recurring
+   *
+   * @return array
    */
   protected function basic($isRecurring) {
 
@@ -193,6 +396,7 @@ GROUP BY source WITH ROLLUP
     return $stats;
   }
 
+
   /**
    * Annual retention rate
    *
@@ -224,6 +428,11 @@ GROUP BY source WITH ROLLUP
    * Monthly retention rate
    *
    * This compares the given month with the one before it.
+   *
+   * Churn = number of people lost in this month ÷ number of donors in the month before
+   *
+   * The Simple Way from
+   * https://www.profitwell.com/customer-churn/calculate-churn-rate
    */
   public function calcStatRegularRetentionMonthly() {
 
@@ -233,11 +442,15 @@ GROUP BY source WITH ROLLUP
     $referenceMonthStartDateTime = $this->startDateTime->modify('-1 month');
     $stats = $this->retentionRates($referenceMonthStartDateTime);
 
-    return [
+    $stats = [
         'monthlyRetainedRegularDonorsCount'   => $stats['retainedCount'],
         'monthlyRetainedRegularDonorsPercent' => $stats['retainedPercentage'],
         'monthlyPreviousRegularDonorsCount'   => $stats['referenceDonorCount'],
+        'churnPercent'                        => round(
+          ($stats['referenceDonorCount'] - $stats['retainedCount']) / $stats['referenceDonorCount'] * 100
+          , 1)
     ];
+    $this->statx->setOutputs($stats);
   }
 
   /**
@@ -376,15 +589,16 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
 
     $dao = CRM_Core_DAO::executeQuery($sql);
     if ($dao->fetch()) {
-      return $dao->toArray();
+      $stats = $dao->toArray();
     }
     else {
-      return [
+      $stats = [
         'annualNewDonors' => NULL,
         'annualOldDonors' => NULL,
         'annualRecruitmentPercent' => NULL,
       ];
     }
+    $this->statx->setOutputs($stats);
   }
 
   /**
@@ -447,15 +661,17 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
 
     $dao = CRM_Core_DAO::executeQuery($sql);
     if ($dao->fetch()) {
-      return $dao->toArray();
+      $stats = $dao->toArray();
     }
     else {
-      return [
+      $stats = [
         'monthlyNewDonors' => NULL,
         'monthlyOldDonors' => NULL,
         'monthlyRecruitmentPercent' => NULL,
       ];
     }
+
+    $this->statx->setOutputs($stats);
   }
 
   /**
@@ -499,9 +715,9 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
 
     $dao = CRM_Core_DAO::executeQuery($sql);
     if ($dao->fetch()) {
-      return $dao->toArray();
+      $stats = $dao->toArray();
     }
-    return [
+    $stats = [
       'oneOffDonorsRepeat' => 0,
       'oneOffDonors1st' => 0,
       'oneOffDonors2nd' => 0,
@@ -510,6 +726,7 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
       'oneOffDonors5OrMore' => 0,
       'oneOffsFromRegularDonor' => 0,
     ];
+    $this->statx->setOutputs($stats);
   }
 
   /**
@@ -527,7 +744,7 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
       AND contribution_recur_id IS NULL
     ";
 
-    return CRM_Core_DAO::singleValueQuery($sql);
+    $this->statx->setOutput('OneOffYearToDate', CRM_Core_DAO::singleValueQuery($sql));
   }
 
   /**
@@ -556,4 +773,20 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
 
   }
 
+  public function calcStatMarketing() {
+
+    $stats = [];
+    // Monthly Recurring Revenue
+    $stats['MRR'] = $this->statx->getOutput('regularDonorIncome');
+    // Annual Recurring Revenue
+    $stats['ARR'] = 12 * $stats['MRR'];
+
+    // Average Revenue Per User (donor)
+    $arpu =  $stats['ARR'] / $this->statx->getOutput('regularDonorCount');
+    // Lifetime Value
+    $stats['LTV'] = round($arpu / ($this->statx->getOutput('churnPercent') / 100));
+    $stats['ARPU'] = round($arpu);
+
+    $this->statx->setOutputs($stats);
+  }
 }

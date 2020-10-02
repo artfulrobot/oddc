@@ -356,10 +356,29 @@ function _oddStats2($params) {
   $t = microtime(TRUE);
 
   // Per month.
-  $s = new CRM_Oddc_Stats();
-  $months = $s->getMonthDates('today - 1 year');
-  //$months = $s->getMonthDates('today - 1 month');
+  $x = new CRM_Oddc_Stats();
+
+  // Get first of month.
+  $given = new DateTimeImmutable('today - 1 year');
+  $startOfMonth = $given->modify('first day of');
+  $endOfMonth = $startOfMonth->modify('+1 month - 1 second');
+  $now = new DateTimeImmutable('today');
+
+  $months = [];
+  while ($startOfMonth < $now) {
+    $months[] = [$startOfMonth->format('c'), $endOfMonth->format('c')];
+    $startOfMonth = $startOfMonth->modify('+1 month');
+    $endOfMonth = $startOfMonth->modify('+1 month -1 second');
+  }
+
+  $months = [reset($months)];
   foreach ($months as $month) {
+    $sx = new Statx([
+      'startDate' => $month[0],
+      'endDate' => $month[1],
+    ]);
+    $monthStats = $sx->get(['LTV']);
+    /*
     $s->setStartDate($month[0])->setEndDate($month[1]);
     $monthStats = $s->getStats([
       'RegularDonors',
@@ -372,6 +391,7 @@ function _oddStats2($params) {
       'OneOffYearToDate',
       'Target',
     ], TRUE);
+     */
     $monthStats['period'] = $month;
     $result[] = $monthStats;
   }
