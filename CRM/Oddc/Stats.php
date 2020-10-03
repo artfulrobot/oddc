@@ -139,12 +139,19 @@ class Statx {
             'regularDonorCountSourceEmail', 'regularDonorIncomeSourceEmail', 'regularDonorAvgAmountSourceEmail',
           ],
         ],
-        'calcStatRegularRetentionAnnual' => [
+        'calcStatQuarterlySummary' => [
           'depends' => [],
           'provides' => [
-            'annualRetainedRegularDonorsCount',
-            'annualRetainedRegularDonorsPercent',
-            'annualPreviousRegularDonorsCount',
+            "previousYearQ1OneOff", "previousYearQ1Regular", "previousYearQ1Total",
+            "previousYearQ2OneOff", "previousYearQ2Regular", "previousYearQ2Total",
+            "previousYearQ3OneOff", "previousYearQ3Regular", "previousYearQ3Total",
+            "previousYearQ4OneOff", "previousYearQ4Regular", "previousYearQ4Total",
+            "previousYearTotal",
+            "thisYearQ1OneOff", "thisYearQ1Regular", "thisYearQ1Total",
+            "thisYearQ2OneOff", "thisYearQ2Regular", "thisYearQ2Total",
+            "thisYearQ3OneOff", "thisYearQ3Regular", "thisYearQ3Total",
+            "thisYearQ4OneOff", "thisYearQ4Regular", "thisYearQ4Total",
+            "thisYearYTDTotal",
           ],
         ],
         'calcStatRegularRetentionMonthly' => [
@@ -220,6 +227,14 @@ class Statx {
         }
       }
     }
+  }
+  /**
+   * Output a list of stats.
+   */
+  public function listStats() {
+    $stats = array_keys($this->statProviderIndex);
+    sort($stats);
+    return $stats;
   }
 
   /**
@@ -343,7 +358,12 @@ class StatXGeneric {
   }
 
   /**
-   * How many donors making non-regulr donations did we have in the period?
+   * @todo separate out oD specific stuff
+   *
+   * Calculate count unique donors, income and avg per unique donor for
+   * contributions in the date range, restricted to either regular or one off,
+   * and break down by simplified source.
+   *
    * @param bool $is_recurring
    *
    * @return array
@@ -375,7 +395,7 @@ SELECT
   source,
   COUNT(DISTINCT contact_id) DonorCount,
   SUM(total_amount) DonorIncome,
-  ROUND(SUM(total_amount)/COUNT(contact_id), 2) DonorAvgAmount
+  ROUND(SUM(total_amount)/COUNT(DISTINCT contact_id), 2) DonorAvgAmount
 FROM simplifiedSource
 GROUP BY source WITH ROLLUP
       ";
@@ -394,6 +414,99 @@ GROUP BY source WITH ROLLUP
       }
     }
     return $stats;
+  }
+
+  /**
+   *
+   * Provides stats to summarise Quarterly and year to date income, by regular/one off with comparisons on last year
+   *
+   * @return array
+   */
+  public function calcStatQuarterlySummary() {
+
+    $isRecurringClause = $isRecurring ? 'IS NOT NULL' : 'IS NULL';
+
+    // Calculate quarter cut-offs.
+    $result = Civi::settings()->get('fiscalYearStart');
+      // {"M": "1", "d": "1"}
+    $fiscalYearStartYear = date('Y') - ((date('m-d') < "$result[M]-$result[d]") ? 1 : 0);
+    $datetimes = [
+      'thisYear' => new DateTimeImmutable("$fiscalYearStartYear-$result[M]-$result[d]"),
+    ];
+    $datetimes['lastYear'] = $datetimes['thisYear']->modify('-1 year');
+    $dateSQL = ['lastYearToDateSQL' => (new DateTimeImmutable('today - 1 year'))->format('Ymd')];
+    foreach (['thisYear', 'lastYear'] as $start) {
+      $dt = $datetimes[$start];
+      $dateSQL[$start . 'StartSQL'] = $dt->format('Ymd');
+      foreach ([
+        'Q2StartSQL' => '+ 3 months',
+        'Q3StartSQL' => '+ 6 months',
+        'Q4StartSQL' => '+ 9 months',
+      ] as $name => $modify) {
+      $dateSQL[$start . "$name"] = $dt->modify($modify)->format('Ymd');
+      }
+    }
+
+    $sql = "
+WITH contribsWithDates AS (
+  SELECT
+    IF(receive_date < $dateSQL[thisYearStartSQL], 'previousYear', 'thisYear') fy,
+
+    CASE
+    WHEN receive_date < $dateSQL[lastYearQ2StartSQL] THEN 'Q1'
+    WHEN receive_date < $dateSQL[lastYearQ3StartSQL] THEN 'Q2'
+    WHEN receive_date < $dateSQL[lastYearQ4StartSQL] THEN 'Q3'
+    WHEN receive_date < $dateSQL[thisYearStartSQL] THEN 'Q4'
+    WHEN receive_date < $dateSQL[thisYearQ2StartSQL] THEN 'Q1'
+    WHEN receive_date < $dateSQL[thisYearQ3StartSQL] THEN 'Q2'
+    WHEN receive_date < $dateSQL[thisYearQ4StartSQL] THEN 'Q3'
+    ELSE 'Q4'
+    END quarter,
+
+    IF(contribution_recur_id IS NULL, 'OneOff', 'Regular') donorType,
+    contact_id,
+    total_amount
+
+  FROM civicrm_contribution cc
+  WHERE receive_date >= $dateSQL[lastYearStartSQL]
+  AND is_test=0
+  AND contribution_status_id = 1
+)
+
+SELECT fy, quarter, donorType, SUM(total_amount) DonorIncome
+FROM contribsWithDates
+GROUP BY fy, quarter, donorType WITH ROLLUP
+      ";
+
+    $dao = CRM_Core_DAO::executeQuery($sql);
+    $stats = [];
+
+    while ($dao->fetch()) {
+
+      if (!$dao->fy) {
+        // Ignore the 2 year total, it's meaningless.
+        continue;
+      }
+      $name = $dao->fy;
+      if (!$dao->quarter) {
+        // This is the total of all contribs in this year.
+        if ($dao->fy === 'thisYear') {
+          $name .= "YTDTotal";
+        }
+        else {
+          $name .= "Total";
+        }
+      }
+      else {
+        $name .= $dao->quarter . ($dao->donorType ?? 'Total');
+      }
+      $stats[$name] = $dao->DonorIncome;
+    }
+
+    // We need another set of stats for donor income last year to date. ? or not?
+
+    $this->statx->setOutputs($stats);
+    return;
   }
 
 

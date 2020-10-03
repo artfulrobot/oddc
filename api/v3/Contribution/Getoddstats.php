@@ -353,12 +353,17 @@ function _oddStats1($params) {
  */
 function _oddStats2($params) {
   $result = [];
+  $x = new CRM_Oddc_Stats(); // xxx include
+  if ($params['list'] ?? NULL) {
+    $sx = new Statx();
+    $result = $sx->listStats();
+    return civicrm_api3_create_success($result, $params, 'Contribution', 'GetODDStats');
+  }
   $t = microtime(TRUE);
 
   // Per month.
-  $x = new CRM_Oddc_Stats();
 
-  // Get first of month.
+  // Get first of this month, a year ago
   $given = new DateTimeImmutable('today - 1 year');
   $startOfMonth = $given->modify('first day of');
   $endOfMonth = $startOfMonth->modify('+1 month - 1 second');
@@ -371,13 +376,13 @@ function _oddStats2($params) {
     $endOfMonth = $startOfMonth->modify('+1 month -1 second');
   }
 
-  $months = [reset($months)];
+  $months = [reset($months)]; // xxx
   foreach ($months as $month) {
     $sx = new Statx([
       'startDate' => $month[0],
       'endDate' => $month[1],
     ]);
-    $monthStats = $sx->get(['LTV']);
+    $monthStats = $sx->get(['q1Total']);
     /*
     $s->setStartDate($month[0])->setEndDate($month[1]);
     $monthStats = $s->getStats([
