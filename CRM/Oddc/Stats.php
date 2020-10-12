@@ -146,12 +146,21 @@ class Statx {
             "previousYearQ2OneOff", "previousYearQ2Regular", "previousYearQ2Total",
             "previousYearQ3OneOff", "previousYearQ3Regular", "previousYearQ3Total",
             "previousYearQ4OneOff", "previousYearQ4Regular", "previousYearQ4Total",
-            "previousYearTotal",
+            "previousYearOneOff", "previousYearRegular", "previousYearTotal",
             "thisYearQ1OneOff", "thisYearQ1Regular", "thisYearQ1Total",
             "thisYearQ2OneOff", "thisYearQ2Regular", "thisYearQ2Total",
             "thisYearQ3OneOff", "thisYearQ3Regular", "thisYearQ3Total",
             "thisYearQ4OneOff", "thisYearQ4Regular", "thisYearQ4Total",
-            "thisYearYTDTotal",
+            "thisYearOneOff", "thisYearRegular", "thisYearTotal",
+          ],
+        ],
+        'calcStatRegularRetentionAnnual' => [
+          'depends' => [],
+          'provides' => [
+            'annualRetainedRegularDonorsCount',
+            'annualRetainedRegularDonorsPercent',
+            'annualPreviousRegularDonorsCount',
+            'annualChurnPercent',
           ],
         ],
         'calcStatRegularRetentionMonthly' => [
@@ -239,8 +248,14 @@ class Statx {
 
   /**
    * Calculate a set of required stats.
+   *
+   * @param NULL|array of string stat names, as from oddc.getoddstats stats_set=2 list=1
+   * If NULL, all stats are returned.
    */
-  public function get($stats) {
+  public function get($stats = NULL) {
+    if ($stats === NULL) {
+      $stats = $this->listStats();
+    }
     return $this->runStats($stats)->outputs;
   }
   /**
@@ -353,7 +368,7 @@ class StatXGeneric {
   /**
    * How many donors making non-regulr donations did we have in the period?
    */
-  public function calcStatOneOffDonors($obj) {
+  public function calcStatOneOffDonors() {
     $this->statx->setOutputs($this->basic(FALSE));
   }
 
@@ -491,14 +506,19 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
       if (!$dao->quarter) {
         // This is the total of all contribs in this year.
         if ($dao->fy === 'thisYear') {
-          $name .= "YTDTotal";
+          $name .= "Total";
         }
         else {
+          // e.g. previousYearTotal
           $name .= "Total";
         }
       }
       else {
+        // e.g. thisYearQ1OneOff or thisYearQ1OneOffTotal
         $name .= $dao->quarter . ($dao->donorType ?? 'Total');
+        if ($dao->donorType) {
+          $stats[$dao->fy . $dao->donorType ] += $dao->DonorIncome;
+        }
       }
       $stats[$name] = $dao->DonorIncome;
     }
@@ -524,17 +544,18 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
    */
   public function calcStatRegularRetentionAnnual() {
 
-    if (!$this->startDate) {
-      throw BadMethodCallException("Need startDate for calcStatRegularRetentionAnnual");
-    }
     $referenceMonthStartDateTime = $this->startDateTime->modify('-1 year');
     $stats = $this->retentionRates($referenceMonthStartDateTime);
 
-    return [
+    $stats = [
         'annualRetainedRegularDonorsCount'   => $stats['retainedCount'],
         'annualRetainedRegularDonorsPercent' => $stats['retainedPercentage'],
         'annualPreviousRegularDonorsCount'   => $stats['referenceDonorCount'],
+        'annualChurnPercent'                 => round(
+          ($stats['referenceDonorCount'] - $stats['retainedCount']) / $stats['referenceDonorCount'] * 100
+          , 1)
     ];
+    $this->statx->setOutputs($stats);
   }
 
   /**
@@ -633,91 +654,25 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
   }
 
   /**
+   * Monthly recruitment rate
+   */
+  public function calcStatRegularRecruitmentMonthly() {
+    return $this->recruitmentRate('monthly');
+  }
+
+  /**
    * Annual recruitment rate
-   *
-   * xxx I'm unsure about this one.
-   *
-   * a) How many donors have been recruited since last year? And what's that as a %age of the regular donors at the end of last year?
-   *
-   * b) How many of our current regular donors were recruited since last year? And what's that as a %age of the regular donors at the end of last year?
-   *
-   * Consider this:
-   *
-   * - It's now Aug 2020
-   * - Neither Wilma nor Betty were donors in Aug 2019, both signed up in Jan 2020
-   * - Wilma has since stopped giving, and as such is no longer a regular donor.
-   *
-   * Under method (a), we'd say we have 2 recruits. Under (b) we'd say we have 1.
    */
   public function calcStatRegularRecruitmentAnnual() {
-    return NULL;
-
-    if (!$this->startDate) {
-      throw BadMethodCallException("Need startDate for calcStatRegularRecruitmentAnnual");
-    }
-    if (!$this->endDate) {
-      throw BadMethodCallException("Need endDate for calcStatRegularRecruitmentAnnual");
-    }
-
-    // Number of people who gave regular donation this year/year but had not
-    // given a regular donation in the previous year/year
-    //
-    // divided by the number of people who gave regular donation in previous
-    // year/year.
-    //
-    // 0 - 100+%
-    $sql = "
-      WITH lastYearsDonors AS (
-      SELECT contact_id
-      FROM civicrm_contribution
-      WHERE receive_date >= $this->startDate - INTERVAL 2 YEAR AND receive_date < $this->startDate - INTERVAL 1 YEAR
-      AND contribution_recur_id IS NOT NULL
-      AND contribution_status_id = 1
-      AND is_test = 0
-      GROUP BY contact_id
-      ),
-
-      thisYearsNewDonors AS (
-      SELECT contact_id
-      FROM civicrm_contribution
-      WHERE receive_date >= $this->startDate - INTERVAL 1 YEAR AND receive_date < $this->startDate
-      AND contribution_recur_id IS NOT NULL
-      AND contribution_status_id = 1
-      AND is_test = 0
-      AND NOT EXISTS (SELECT contact_id FROM lastYearsDonors lm WHERE lm.contact_id = civicrm_contribution.contact_id)
-      GROUP BY contact_id
-      ),
-
-      counts AS (
-        SELECT (SELECT COUNT(*) FROM thisYearsNewDonors) newDonors,
-               (SELECT COUNT(*) FROM lastYearsDonors) oldDonors
-      )
-
-      SELECT newDonors annualNewDonors,
-        oldDonors annualOldDonors,
-        newDonors / oldDonors * 100 annualRecruitmentPercent
-      FROM counts
-      ;
-      ";
-
-    $dao = CRM_Core_DAO::executeQuery($sql);
-    if ($dao->fetch()) {
-      $stats = $dao->toArray();
-    }
-    else {
-      $stats = [
-        'annualNewDonors' => NULL,
-        'annualOldDonors' => NULL,
-        'annualRecruitmentPercent' => NULL,
-      ];
-    }
-    $this->statx->setOutputs($stats);
+    return $this->recruitmentRate('annual');
   }
 
   /**
    * Monthly recruitment rate
+   *
+   * @param string $period monthly|annual
    */
-  public function calcStatRegularRecruitmentMonthly() {
+  public function recruitmentRate($period) {
 
     if (!$this->startDate) {
       throw BadMethodCallException("Need startDate for calcStatRegularRecruitmentMonthly");
@@ -726,7 +681,20 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
       throw BadMethodCallException("Need endDate for calcStatRegularRecruitmentMonthly");
     }
 
-    $lastMonthStartDateTime = $this->startDateTime->modify('-1 month');
+    // Figure out the reference month.
+    if ($period === 'monthly') {
+      // Compare with the previous month.
+      $lastMonthStartDateTime = $this->startDateTime->modify('-1 month');
+    }
+    elseif ($period === 'annual') {
+      // Compare with the same month the previous year.
+      $lastMonthStartDateTime = $this->startDateTime->modify('-1 year');
+    }
+    else {
+      // Protect from SQL injection.
+      throw new \Exception("$period must be monthly|annual");
+    }
+
     $lastMonthStart = $lastMonthStartDateTime->format('YmdHis');
     $lastMonthEndDateTime = $lastMonthStartDateTime->modify('+ 1 month - 1 second');
     $lastMonthEndDate = $lastMonthEndDateTime->format('YmdHis');
@@ -765,22 +733,23 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
                (SELECT COUNT(*) FROM lastMonthsDonors) oldDonors
       )
 
-      SELECT newDonors monthlyNewDonors,
-        oldDonors monthlyOldDonors,
-        newDonors / oldDonors * 100 monthlyRecruitmentPercent
+      SELECT newDonors {$period}NewDonors,
+        oldDonors {$period}OldDonors,
+        newDonors / oldDonors * 100 {$period}RecruitmentPercent
       FROM counts
-      ;
-      ";
+      ;";
 
     $dao = CRM_Core_DAO::executeQuery($sql);
     if ($dao->fetch()) {
       $stats = $dao->toArray();
+ //     $stats["{$period}Dates"] = "$lastMonthStart - $lastMonthEndDate compared to $this->startDate - $this->endDate";
     }
     else {
       $stats = [
-        'monthlyNewDonors' => NULL,
-        'monthlyOldDonors' => NULL,
-        'monthlyRecruitmentPercent' => NULL,
+//        "{$period}Dates" => "$lastMonthStart - $lastMonthEndDate compared to $this->startDate - $this->endDate",
+        "{$period}NewDonors" => NULL,
+        "{$period}OldDonors" => NULL,
+        "{$period}RecruitmentPercent" => NULL,
       ];
     }
 

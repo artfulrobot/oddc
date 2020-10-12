@@ -18,4 +18,10 @@
     <title>MailingConversion</title>
     <access_arguments>access CiviCRM</access_arguments>
   </item>
+  <item>
+    <path>civicrm/revenuedashboard</path>
+    <page_callback>CRM_Oddc_Page_RevenueDashboard</page_callback>
+    <title>RevenueDashboard</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
 </menu>

@@ -361,7 +361,7 @@ function _oddStats2($params) {
   }
   $t = microtime(TRUE);
 
-  // Per month.
+  $today = date('Y-m-d');
 
   // Get first of this month, a year ago
   $given = new DateTimeImmutable('today - 1 year');
@@ -376,13 +376,13 @@ function _oddStats2($params) {
     $endOfMonth = $startOfMonth->modify('+1 month -1 second');
   }
 
-  $months = [reset($months)]; // xxx
+  //$months = [reset($months)]; // xxx
   foreach ($months as $month) {
     $sx = new Statx([
       'startDate' => $month[0],
       'endDate' => $month[1],
     ]);
-    $monthStats = $sx->get(['q1Total']);
+    $monthStats = $sx->get();
     /*
     $s->setStartDate($month[0])->setEndDate($month[1]);
     $monthStats = $s->getStats([
@@ -398,6 +398,8 @@ function _oddStats2($params) {
     ], TRUE);
      */
     $monthStats['period'] = $month;
+    $monthStats['period'][] = ($month[1] > $today) ? 'incomplete' : 'full';
+
     $result[] = $monthStats;
   }
 
