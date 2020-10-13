@@ -207,6 +207,10 @@ class Statx {
             'churnPercent',
           ],
           'provides' => [ 'MRR', 'ARR', 'ARPU', 'LTV' ]
+        ],
+        'calcStatOneOffTopCountries' => [
+          'depends' => [],
+          'provides' => ['oneOffTopCountries']
         ]
       ],
     ],
@@ -799,15 +803,17 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
     if ($dao->fetch()) {
       $stats = $dao->toArray();
     }
-    $stats = [
-      'oneOffDonorsRepeat' => 0,
-      'oneOffDonors1st' => 0,
-      'oneOffDonors2nd' => 0,
-      'oneOffDonors3rd' => 0,
-      'oneOffDonors4th' => 0,
-      'oneOffDonors5OrMore' => 0,
-      'oneOffsFromRegularDonor' => 0,
-    ];
+    else {
+      $stats = [
+        'oneOffDonorsRepeat' => 0,
+        'oneOffDonors1st' => 0,
+        'oneOffDonors2nd' => 0,
+        'oneOffDonors3rd' => 0,
+        'oneOffDonors4th' => 0,
+        'oneOffDonors5OrMore' => 0,
+        'oneOffsFromRegularDonor' => 0,
+      ];
+    }
     $this->statx->setOutputs($stats);
   }
 
@@ -869,6 +875,36 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
     $stats['LTV'] = round($arpu / ($this->statx->getOutput('churnPercent') / 100));
     $stats['ARPU'] = round($arpu);
 
+    $this->statx->setOutputs($stats);
+  }
+  public function calcStatOneOffTopCountries() {
+
+    $stats = [];
+    $sql = "
+      WITH contactCountries AS (
+        SELECT ad.contact_id, FIRST_VALUE(country.name) OVER (PARTITION BY contact_id ORDER BY is_primary) country
+        FROM civicrm_address ad
+        INNER JOIN civicrm_country country ON ad.country_id = country.id
+        GROUP BY ad.contact_id
+      )
+
+      SELECT COALESCE(contactCountries.country, 'Unknown') country, COUNT(*) payments
+      FROM civicrm_contribution cc
+      LEFT JOIN contactCountries ON cc.contact_id = contactCountries.contact_id
+      WHERE receive_date >= $this->startDate AND receive_date <= $this->endDate
+      AND is_test=0
+      AND contribution_status_id = 1
+      AND contribution_recur_id IS NULL
+      GROUP BY contactCountries.country
+      ORDER BY COUNT(*) DESC
+      LIMIT 10
+    ";
+    $dao = CRM_Core_DAO::executeQuery($sql);
+    $results = [];
+    while ($dao->fetch()) {
+      $results[] = ['country' => $dao->country, 'payments' => (int) $dao->payments];
+    }
+    $stats['oneOffTopCountries'] = $results;
     $this->statx->setOutputs($stats);
   }
 }
