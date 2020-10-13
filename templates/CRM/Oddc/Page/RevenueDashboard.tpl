@@ -225,10 +225,13 @@ strong blue: #0162B7 = hsl(208, 99%, 36%)
   margin: 0;
   padding: 0;
   display: inline-block;
+  line-height: 1.5;
 }
 .revenuedashboard ul.months a,
 .revenuedashboard ul.months span {
   margin-right: 2rem;
+  width: 5rem;
+  display: inline-block;
 }
 
 .revenuedashboard .bigstats {
@@ -239,6 +242,7 @@ strong blue: #0162B7 = hsl(208, 99%, 36%)
 .revenuedashboard .bigstats>div {
   flex: 1 0 auto;
   padding: 0 1rem;
+  margin-bottom: 2rem;
 }
 .revenuedashboard .bigstats>div>div { height: 100%; }
 
