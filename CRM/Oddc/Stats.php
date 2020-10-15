@@ -1,4 +1,20 @@
 <?php
+/*
+Thinking on timezones.
+
+MySQL does not store timezone with the datetime field type. Therefore it's just storing whatever is passed in.
+This is likely the LOCAL TIME according to the server, so Europe/London time, and so sometimes UTC, sometimes BST.
+
+The stats outputs period dates with their timezone, in ISO 8601 format (adding +01:00 at the end, for example).
+
+Javascript's Date object understands timezones, but this causes problems.
+Therefore the JS takes the timezone off and forces a +00:00 declaring the time
+as UTC. That way it can then use toUTCString() to obtain the correct month
+name.
+
+When parsing a date like Y-m-d H:i:s in Javascript, 
+
+ */
 
 class CRM_Oddc_Stats {
   /** @var Redis|NULL */
@@ -205,6 +221,7 @@ class Statx {
             'regularDonorIncome',
             'regularDonorCount',
             'churnPercent',
+            'annualChurnPercent',
           ],
           'provides' => [ 'MRR', 'ARR', 'ARPU', 'LTV' ]
         ],
@@ -873,6 +890,7 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
     $arpu =  $stats['ARR'] / $this->statx->getOutput('regularDonorCount');
     // Lifetime Value
     $stats['LTV'] = round($arpu / ($this->statx->getOutput('churnPercent') / 100));
+    $stats['LTV'] = round($arpu / ($this->statx->getOutput('annualChurnPercent') / 100));
     $stats['ARPU'] = round($arpu);
 
     $this->statx->setOutputs($stats);

@@ -61,8 +61,8 @@ strong blue: #0162B7 = hsl(208, 99%, 36%)
   <h2>Figures for {{selectedMonth}}</h2>
   <ul class="months">
     <li v-for="m in all.filter(m => m.period[2] === 'full')" :key="m" >
-      <a href @click.prevent="latestFull = m" v-show="m !== latestFull" >{{ formatDate(m.period[0]) }}</a>
-      <span  v-show="m === latestFull" >{{ formatDate(m.period[0]) }}</span>
+      <a href @click.prevent="latestFull = m" v-show="m !== latestFull" >{{ formatDateAsMonthYear(m.period[0]) }}</a>
+      <span  v-show="m === latestFull" >{{ formatDateAsMonthYear(m.period[0]) }}</span>
     </li>
   </ul>
   <div class="bigstats">
@@ -72,13 +72,12 @@ strong blue: #0162B7 = hsl(208, 99%, 36%)
         <div class="l">
           <div class="bignum" >{{Math.round(latestFull.annualRetainedRegularDonorsPercent * 10)/10}}%</div>
           <div class="othernum" >{{latestFull.annualRetainedRegularDonorsCount + ' / ' + latestFull.annualPreviousRegularDonorsCount}}<br />
-            last year
-          </div>
+          last month ({{latestFull.annualChurnPercent}}% churn)</div>
         </div>
         <div class="r">
           <div class="bignum" >{{Math.round(latestFull.monthlyRetainedRegularDonorsPercent*10)/10}}%</div>
-          <div class="othernum" >{{latestFull.monthlyRetainedRegularDonorsCount + ' / ' + latestFull.monthlyPreviousRegularDonorsCount}}</div>
-          <div class="othernum" >last month ({{latestFull.churnPercent}}% churn)</div>
+          <div class="othernum" >{{latestFull.monthlyRetainedRegularDonorsCount + ' / ' + latestFull.monthlyPreviousRegularDonorsCount}}<br />
+          last month ({{latestFull.churnPercent}}% churn)</div>
         </div>
       </div>
     </div>
@@ -331,11 +330,6 @@ const app = Vue.createApp({
 
     data.formatPercentage = (stat) => Math.round(data.latest[stat]) + '%';
 
-    data.formatDate = (datetimeString) => {
-      var d = new Date(datetimeString);
-      return d.toUTCString().replace(/^\w+, \d+ (\w+ \d+).*$/, '$1');
-    };
-
     console.log("data ends");
     return data;
   },
@@ -372,8 +366,7 @@ const app = Vue.createApp({
       return parts;
     },
     selectedMonth() {
-      var d = new Date(this.latestFull.period[0]);
-      return d.toUTCString().replace(/^\w+, \d+ (\w+ \d+).*$/, '$1');
+      return this.formatDateAsMonthYear(this.latestFull.period[0]);
     }
   },
   methods: {
@@ -386,6 +379,14 @@ const app = Vue.createApp({
         return parseFloat(this.latestFull[key]).toLocaleString();
       }
       return '';
+    },
+    formatDateAsMonthYear(iso8601string) {
+      if (!iso8601string) {
+        return '';
+      }
+      const pretendUTCTime = iso8601string.replace(/(\+\d\d:\d\d)?$/, '+00:00');
+      const d = new Date(pretendUTCTime);
+      return d.toUTCString().replace(/^\w+, \d+ (\w+ \d+).*$/, '$1');
     }
   },
   components: {
