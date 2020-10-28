@@ -1,0 +1,41 @@
+{
+  "name": "oddc",
+  "version": "1.0.0",
+  "description": "## Metadata",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "npm run development",
+    "development": "cross-env NODE_ENV=development node_modules/webpack/bin/webpack.js --progress --hide-modules --config=node_modules/laravel-mix/setup/webpack.config.js",
+    "watch": "npm run development -- --watch",
+    "prod": "npm run production",
+    "production": "cross-env NODE_ENV=production node_modules/webpack/bin/webpack.js --no-progress --hide-modules --config=node_modules/laravel-mix/setup/webpack.config.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artfulrobot/oddc.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/artfulrobot/oddc/issues"
+  },
+  "homepage": "https://github.com/artfulrobot/oddc#readme",
+  "devDependencies": {
+    "cross-env": "^7.0.2",
+    "fibers": "^5.0.0",
+    "laravel-mix": "^5.0.7",
+    "node-sass": "^4.14.1",
+    "sass": "^1.27.0",
+    "sass-loader": "^10.0.4",
+    "vue-template-compiler": "^2.6.12"
+  },
+  "dependencies": {
+    "chart.js": "^2.9.4",
+    "vue": "^2.6.12",
+    "vue-chartkick": "^0.6.1"
+  }
+}

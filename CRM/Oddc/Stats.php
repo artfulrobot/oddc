@@ -572,6 +572,7 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
         'annualRetainedRegularDonorsCount'   => $stats['retainedCount'],
         'annualRetainedRegularDonorsPercent' => $stats['retainedPercentage'],
         'annualPreviousRegularDonorsCount'   => $stats['referenceDonorCount'],
+        'annualChurnAmount'                  => $stats['churnAmount'],
         'annualChurnPercent'                 => round(
           ($stats['referenceDonorCount'] - $stats['retainedCount']) / $stats['referenceDonorCount'] * 100
           , 1)
@@ -601,6 +602,7 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
         'monthlyRetainedRegularDonorsCount'   => $stats['retainedCount'],
         'monthlyRetainedRegularDonorsPercent' => $stats['retainedPercentage'],
         'monthlyPreviousRegularDonorsCount'   => $stats['referenceDonorCount'],
+        'monthlyChurnAmount'                  => $stats['churnAmount'],
         'churnPercent'                        => round(
           ($stats['referenceDonorCount'] - $stats['retainedCount']) / $stats['referenceDonorCount'] * 100
           , 1)
@@ -612,6 +614,13 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
    * Retention
    *
    * This compares the given month with the reference month.
+   *
+   * This is basically a cohort analysis; this matters when considering annual.
+   * e.g. the churnAmount for annual compares the amount from the cohort of reg
+   * givers 12 months ago to see how much is still coming in from them. This is
+   * NOT the total loss over the year from churned donors, as you might think.
+   *
+   * But for monthly it works ok.
    *
    * @param DateTimeImmutable
    */
@@ -632,7 +641,7 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
     // divided by the number of people who also gave in the previous month. 0 - 100%
     $sql = "
 WITH lastMonthsDonors AS (
-SELECT contact_id
+SELECT contact_id, total_amount
 FROM civicrm_contribution
 WHERE receive_date >= $refMonthStart AND receive_date <= $refMonthEnd
 AND contribution_recur_id IS NOT NULL
@@ -642,7 +651,7 @@ GROUP BY contact_id
 ),
 
 thisMonthsDonors AS (
-SELECT contact_id
+SELECT contact_id, total_amount
 FROM civicrm_contribution
 WHERE receive_date >= $this->startDate AND receive_date <= $this->endDate
 AND contribution_recur_id IS NOT NULL
@@ -654,7 +663,8 @@ GROUP BY contact_id
 SELECT
   SUM(thisMonthsDonors.contact_id IS NOT NULL) retainedCount,
   COUNT(lastMonthsDonors.contact_id) referenceDonorCount,
-  ROUND(SUM(thisMonthsDonors.contact_id IS NOT NULL) * 100 / COUNT(lastMonthsDonors.contact_id), 1) retainedPercentage
+  ROUND(SUM(thisMonthsDonors.contact_id IS NOT NULL) * 100 / COUNT(lastMonthsDonors.contact_id), 1) retainedPercentage,
+  SUM(thisMonthsDonors.total_amount) - SUM(lastMonthsDonors.total_amount) churnAmount
 FROM lastMonthsDonors
 LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.contact_id
       ;
@@ -669,6 +679,7 @@ LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.con
         'retainedCount' => NULL,
         'referenceDonorCount' => NULL,
         'retainedPercentage' => NULL,
+        'churnAmount' => NULL,
         'referencePeriod' => [$referenceMonthStartDateTime, $refMonthEndDateTime]
       ];
     }
