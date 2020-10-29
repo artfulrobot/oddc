@@ -12,7 +12,7 @@ Number.prototype.toLocaleFixed = function(n) {
     });
 };
 // https://stackoverflow.com/a/44134328/623519
-window.hslToHex = function hslToHex(h, s, l) {
+window.hslToRgb = function hslToRgb(h, s, l) {
   h /= 360;
   s /= 100;
   l /= 100;
@@ -34,8 +34,16 @@ window.hslToHex = function hslToHex(h, s, l) {
     g = hue2rgb(p, q, h);
     b = hue2rgb(p, q, h - 1 / 3);
   }
+  return {r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255)};
+}
+window.hslaToRgba = function (hsl, a) {
+  const rgb = hslToRgb(hsl[0], hsl[1], hsl[2]);
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
+}
+window.hslToHex = function hslToHex(h, s, l) {
+  var {r, g, b} = hslToRgb(h, s, l);
   const toHex = x => {
-    const hex = Math.round(x * 255).toString(16);
+    const hex = x.toString(16);
     return hex.length === 1 ? '0' + hex : hex;
   };
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;

@@ -5,7 +5,7 @@
       :data="incomeAndChurnChartData.data"
       :dataset="incomeAndChurnChartData.dataset"
       :library="incomeAndChurnChartData.library"
-      :curve="false"
+      :curve="curve"
       :min="incomeAndChurnChartData.min"
       ></area-chart>
 
@@ -30,62 +30,13 @@
           <h2>Year to Date</h2>
           <div>
             <div class="bignum" >£{{formatNum(latest.thisYearTotal, 0)}}</div>
+            <div class="othernum" >&nbsp;</div>
           </div>
         </div>
       </div>
     </div>
     <h2>Quarterly Income Summary</h2>
-    <table>
-      <thead>
-        <tr>
-          <th></th>
-          <th class="right">Q1</th>
-          <th class="right">Q2</th>
-          <th class="right">Q3</th>
-          <th class="right">Q4</th>
-          <th class="right">Total year to date</th>
-          <th class="right">Total for previous year</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th>Total donor income</th>
-          <td><bg-barchart :value="latest.thisYearQ1Total" :total="latest.thisYearTotal" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ2Total" :total="latest.thisYearTotal" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ3Total" :total="latest.thisYearTotal" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ4Total" :total="latest.thisYearTotal" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearTotal" :total="latest.thisYearTotal"  ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearTotal" :total="latest.thisYearTotal"  ></bg-barchart></td>
-        </tr>
-        <tr>
-          <th>One off</th>
-          <td><bg-barchart :value="latest.thisYearQ1OneOff" :total="latest.thisYearOneOff" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ2OneOff" :total="latest.thisYearOneOff" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ3OneOff" :total="latest.thisYearOneOff" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ4OneOff" :total="latest.thisYearOneOff" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearOneOff" :total="latest.thisYearOneOff"  ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearOneOff" :total="latest.thisYearOneOff"  ></bg-barchart></td>
-        </tr>
-        <tr>
-          <th>Regular</th>
-          <td><bg-barchart :value="latest.thisYearQ1Regular" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ2Regular" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ3Regular" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearQ4Regular" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.thisYearRegular" :total="latest.thisYearRegular"  ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearRegular" :total="latest.thisYearRegular"  ></bg-barchart></td>
-        </tr>
-        <tr>
-          <th>Previous Year</th>
-          <td><bg-barchart :value="latest.previousYearQ1Total" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearQ2Total" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearQ3Total" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearQ4Total" :total="latest.thisYearRegular" bar=1 ></bg-barchart></td>
-          <td><bg-barchart :value="latest.previousYearTotal" :total="latest.thisYearRegular"  ></bg-barchart></td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
+    <quarterly-table :latest="latest" ></quarterly-table>
 
     <h2>Figures for {{selectedMonth}}</h2>
     <ul class="months">
@@ -216,6 +167,8 @@
       </tbody>
     </table>
 
+    <h2>openTrust Quarterly Income Summary</h2>
+    <quarterly-table :latest="otLatest" ></quarterly-table>
   </div>
 </template>
 <style lang="scss">
@@ -270,6 +223,11 @@ $strongBlue: #0162B7; //= hsl(208, 99%, 36%)
 .revenuedashboard .bignums {
   margin: 0;
   padding: 2rem 1rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-gap: 1rem;
+  gap: 1rem;
+
   background: white;
   text-align: center;
 }
@@ -282,10 +240,7 @@ $strongBlue: #0162B7; //= hsl(208, 99%, 36%)
 /* Two columns */
 .revenuedashboard .bignums.two {
   width: auto; /* civicrm.css adds a 2em size to .two! */
-  display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-gap: 1rem;
-  gap: 1rem;
 }
 .revenuedashboard .bignums.two>h2 {
   grid-column: 1 / 3 ;
@@ -340,8 +295,12 @@ $strongBlue: #0162B7; //= hsl(208, 99%, 36%)
 
 </style>
 <script>
+import QuarterlyTable from './QuarterlyTable.vue';
+import BgBarchart from './BgBarchart.vue';
+
 export default {
   props: ['config'],
+  components: {QuarterlyTable, BgBarchart},
   data() {
     const data = this.config;
 
@@ -353,10 +312,37 @@ export default {
     }
     data.latestFull = (i < 0) ? null : data.all[i];
 
+    data.colours = [
+      'rgba(190, 93, 93, 1)', // Red
+      'rgba(148, 204, 100, 1)', // Green
+      'rgba(190, 204, 101, 1)', // Amber
+    ];
+    data.coloursHsl = [
+      [5, 50, 50],
+      [80, 55, 42],
+      [65, 50, 50],
+    ];
+    data.bgColour = 0.25;
+
+    data.curve = false;
+    data.up = 0;
+
     return data;
   },
   computed: {
+    otLatest() {
+      var l = {};
+      Object.keys(this.latest).forEach(k => {
+        if (k.match(/^OT/)) {
+          var k2 = k.substr(2);
+          l[k2] = this.latest[k];
+        }
+      })
+      return l;
+    },
     incomeAndChurnChartData() {
+      console.log("Recalculating incomeAndChurnChartData");
+      window.x = this;
 
       const d = [
         {name: "Churn", data: {}, dataset:    {fill: 'origin',}},
@@ -364,27 +350,23 @@ export default {
         {name: "One Offs", data: {}, dataset: {fill: '-1',    }}
       ];
 
-      var i = 0;
-      [
-        '190, 93, 93', // Red
-        '148, 204, 100', // Green
-        '225, 191, 101', // Amber
-      ].forEach(c => {
-        d[i].dataset.backgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.hoverBackgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.pointBackgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.pointHoverBackgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.backgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.hoverBackgroundColor = `rgba(${c}, 0.4)`;
-        d[i].dataset.pointHoverBackgroundColor = `rgba(${c}, 0.4)`;
+      for (var i = 0; i<3; i++) {
+        var c = hslaToRgba(this.coloursHsl[i], 1);
+        var bg = hslaToRgba(this.coloursHsl[i], this.bgColour);
+        d[i].dataset.backgroundColor = bg;
+        d[i].dataset.hoverBackgroundColor = bg;
+        d[i].dataset.pointBackgroundColor = bg;
+        d[i].dataset.pointHoverBackgroundColor = bg;
+        d[i].dataset.backgroundColor = bg;
+        d[i].dataset.hoverBackgroundColor = bg;
+        d[i].dataset.pointHoverBackgroundColor = bg;
 
-        d[i].dataset.borderColor = `rgba(${c}, 1)`;
-        d[i].dataset.hoverBorderColor = `rgba(${c}, 1)`;
+        d[i].dataset.borderColor = c;
+        d[i].dataset.hoverBorderColor = c;
 
-        d[i].dataset.pointBorderColor = `rgba(${c}, 1)`;
-        d[i].dataset.pointHoverBorderColor = `rgba(${c}, 1)`;
-        i++;
-      });
+        d[i].dataset.pointBorderColor = c;
+        d[i].dataset.pointHoverBorderColor = c;
+      };
 
       var min = 0, max=0;
       this.all.forEach(series => {
@@ -492,23 +474,6 @@ export default {
       const pretendUTCTime = iso8601string.replace(/(\+\d\d:\d\d)?$/, '+00:00');
       const d = new Date(pretendUTCTime);
       return d.toUTCString().replace(/^\w+, \d+ (\w+ \d+).*$/, '$1');
-    }
-  },
-  components: {
-    bgBarchart: {
-      props: ['total', 'value', 'prefix', 'bar'],
-      data() {
-        return {};
-      },
-      computed: {
-        percent() {
-          return parseFloat(this.value) * 100 / parseFloat(this.total);
-        }
-      },
-      template: `<div class="bgbar">
-        <div v-if="bar" class="bar" :style="{width: percent + '%'}"></div>
-        <div class="text">{{prefix}}{{Math.round(parseFloat(value)).toLocaleString()}}</div>
-      </div>`
     }
   }
 };

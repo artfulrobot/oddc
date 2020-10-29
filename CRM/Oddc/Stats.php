@@ -170,6 +170,22 @@ class Statx {
             "thisYearOneOff", "thisYearRegular", "thisYearTotal",
           ],
         ],
+        // Custom: openTrust only
+        'calcStatQuarterlySummaryOt' => [
+          'depends' => [],
+          'provides' => [
+            "otPreviousYearQ1OneOff", "otPreviousYearQ1Regular", "otPreviousYearQ1Total",
+            "otPreviousYearQ2OneOff", "otPreviousYearQ2Regular", "otPreviousYearQ2Total",
+            "otPreviousYearQ3OneOff", "otPreviousYearQ3Regular", "otPreviousYearQ3Total",
+            "otPreviousYearQ4OneOff", "otPreviousYearQ4Regular", "otPreviousYearQ4Total",
+            "otPreviousYearOneOff", "otPreviousYearRegular", "otPreviousYearTotal",
+            "otThisYearQ1OneOff", "otThisYearQ1Regular", "otThisYearQ1Total",
+            "otThisYearQ2OneOff", "otThisYearQ2Regular", "otThisYearQ2Total",
+            "otThisYearQ3OneOff", "otThisYearQ3Regular", "otThisYearQ3Total",
+            "otThisYearQ4OneOff", "otThisYearQ4Regular", "otThisYearQ4Total",
+            "otThisYearOneOff", "otThisYearRegular", "otThisYearTotal",
+          ],
+        ],
         'calcStatRegularRetentionAnnual' => [
           'depends' => [],
           'provides' => [
@@ -419,7 +435,7 @@ WITH simplifiedSource AS (
     ELSE 'other'
     END source,
     contact_id,
-    total_amount
+    net_amount
   FROM civicrm_contribution cc
   WHERE receive_date >= $this->startDate AND receive_date <= $this->endDate
   AND is_test=0
@@ -430,8 +446,8 @@ WITH simplifiedSource AS (
 SELECT
   source,
   COUNT(DISTINCT contact_id) DonorCount,
-  SUM(total_amount) DonorIncome,
-  ROUND(SUM(total_amount)/COUNT(DISTINCT contact_id), 2) DonorAvgAmount
+  SUM(net_amount) DonorIncome,
+  ROUND(SUM(net_amount)/COUNT(DISTINCT contact_id), 2) DonorAvgAmount
 FROM simplifiedSource
 GROUP BY source WITH ROLLUP
       ";
@@ -459,8 +475,6 @@ GROUP BY source WITH ROLLUP
    * @return array
    */
   public function calcStatQuarterlySummary() {
-
-    $isRecurringClause = $isRecurring ? 'IS NOT NULL' : 'IS NULL';
 
     // Calculate quarter cut-offs.
     $result = Civi::settings()->get('fiscalYearStart');
@@ -501,7 +515,7 @@ WITH contribsWithDates AS (
 
     IF(contribution_recur_id IS NULL, 'OneOff', 'Regular') donorType,
     contact_id,
-    total_amount
+    net_amount
 
   FROM civicrm_contribution cc
   WHERE receive_date >= $dateSQL[lastYearStartSQL]
@@ -509,7 +523,7 @@ WITH contribsWithDates AS (
   AND contribution_status_id = 1
 )
 
-SELECT fy, quarter, donorType, SUM(total_amount) DonorIncome
+SELECT fy, quarter, donorType, SUM(net_amount) DonorIncome
 FROM contribsWithDates
 GROUP BY fy, quarter, donorType WITH ROLLUP
       ";
@@ -526,13 +540,8 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
       $name = $dao->fy;
       if (!$dao->quarter) {
         // This is the total of all contribs in this year.
-        if ($dao->fy === 'thisYear') {
-          $name .= "Total";
-        }
-        else {
-          // e.g. previousYearTotal
-          $name .= "Total";
-        }
+        // thisYearTotal or previousYearTotal
+        $name .= "Total";
       }
       else {
         // e.g. thisYearQ1OneOff or thisYearQ1OneOffTotal
@@ -545,6 +554,105 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
     }
 
     // We need another set of stats for donor income last year to date. ? or not?
+
+    $this->statx->setOutputs($stats);
+    return;
+  }
+
+  /**
+   *
+   * Provides stats to summarise Quarterly and year to date income, by regular/one off with comparisons on last year
+   *
+   * This is a copy of calcStatQuarterlySummary
+   *
+   * @return array
+   */
+  public function calcStatQuarterlySummaryOt() {
+
+    // Calculate quarter cut-offs.
+    $result = Civi::settings()->get('fiscalYearStart');
+      // {"M": "1", "d": "1"}
+    $fiscalYearStartYear = date('Y') - ((date('m-d') < "$result[M]-$result[d]") ? 1 : 0);
+    $datetimes = [
+      'thisYear' => new DateTimeImmutable("$fiscalYearStartYear-$result[M]-$result[d]"),
+    ];
+    $datetimes['lastYear'] = $datetimes['thisYear']->modify('-1 year');
+    $dateSQL = ['lastYearToDateSQL' => (new DateTimeImmutable('today - 1 year'))->format('Ymd')];
+    foreach (['thisYear', 'lastYear'] as $start) {
+      $dt = $datetimes[$start];
+      $dateSQL[$start . 'StartSQL'] = $dt->format('Ymd');
+      foreach ([
+        'Q2StartSQL' => '+ 3 months',
+        'Q3StartSQL' => '+ 6 months',
+        'Q4StartSQL' => '+ 9 months',
+      ] as $name => $modify) {
+      $dateSQL[$start . "$name"] = $dt->modify($modify)->format('Ymd');
+      }
+    }
+
+    $sql = "
+WITH contribsWithDates AS (
+  SELECT
+    IF(receive_date < $dateSQL[thisYearStartSQL], 'previousYear', 'thisYear') fy,
+
+    CASE
+    WHEN receive_date < $dateSQL[lastYearQ2StartSQL] THEN 'Q1'
+    WHEN receive_date < $dateSQL[lastYearQ3StartSQL] THEN 'Q2'
+    WHEN receive_date < $dateSQL[lastYearQ4StartSQL] THEN 'Q3'
+    WHEN receive_date < $dateSQL[thisYearStartSQL] THEN 'Q4'
+    WHEN receive_date < $dateSQL[thisYearQ2StartSQL] THEN 'Q1'
+    WHEN receive_date < $dateSQL[thisYearQ3StartSQL] THEN 'Q2'
+    WHEN receive_date < $dateSQL[thisYearQ4StartSQL] THEN 'Q3'
+    ELSE 'Q4'
+    END quarter,
+
+    IF(contribution_recur_id IS NULL, 'OneOff', 'Regular') donorType,
+    contact_id,
+    net_amount
+
+  FROM civicrm_contribution cc
+  WHERE receive_date >= $dateSQL[lastYearStartSQL]
+  AND is_test=0
+  AND contribution_status_id = 1
+  AND financial_type_id = 8
+)
+
+SELECT fy, quarter, donorType, SUM(net_amount) DonorIncome
+FROM contribsWithDates
+GROUP BY fy, quarter, donorType WITH ROLLUP
+      ";
+
+    $dao = CRM_Core_DAO::executeQuery($sql);
+    $stats = [];
+
+    while ($dao->fetch()) {
+
+      if (!$dao->fy) {
+        // Ignore the 2 year total, it's meaningless.
+        continue;
+      }
+      $name = 'OT' . $dao->fy;
+      if (!$dao->quarter) {
+        // This is the total of all contribs in this year.
+        // thisYearTotal or previousYearTotal
+        $name .= "Total";
+      }
+      else {
+        // e.g. thisYearQ1OneOff or thisYearQ1OneOffTotal
+        $name .= $dao->quarter . ($dao->donorType ?? 'Total');
+        if ($dao->donorType) {
+          // Also accumulate thisYearRegular etc
+          $stats['OT' . $dao->fy . $dao->donorType ] += $dao->DonorIncome;
+        }
+      }
+      $stats[$name] = $dao->DonorIncome;
+    }
+
+    // We need another set of stats for donor income last year to date. ? or not?
+
+    // xxx
+    // Normally we also have thisYearRegular 
+
 
     $this->statx->setOutputs($stats);
     return;
@@ -641,7 +749,7 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
     // divided by the number of people who also gave in the previous month. 0 - 100%
     $sql = "
 WITH lastMonthsDonors AS (
-SELECT contact_id, total_amount
+SELECT contact_id, net_amount
 FROM civicrm_contribution
 WHERE receive_date >= $refMonthStart AND receive_date <= $refMonthEnd
 AND contribution_recur_id IS NOT NULL
@@ -651,7 +759,7 @@ GROUP BY contact_id
 ),
 
 thisMonthsDonors AS (
-SELECT contact_id, total_amount
+SELECT contact_id, net_amount
 FROM civicrm_contribution
 WHERE receive_date >= $this->startDate AND receive_date <= $this->endDate
 AND contribution_recur_id IS NOT NULL
@@ -664,7 +772,7 @@ SELECT
   SUM(thisMonthsDonors.contact_id IS NOT NULL) retainedCount,
   COUNT(lastMonthsDonors.contact_id) referenceDonorCount,
   ROUND(SUM(thisMonthsDonors.contact_id IS NOT NULL) * 100 / COUNT(lastMonthsDonors.contact_id), 1) retainedPercentage,
-  SUM(thisMonthsDonors.total_amount) - SUM(lastMonthsDonors.total_amount) churnAmount
+  SUM(thisMonthsDonors.net_amount) - SUM(lastMonthsDonors.net_amount) churnAmount
 FROM lastMonthsDonors
 LEFT JOIN thisMonthsDonors ON lastMonthsDonors.contact_id = thisMonthsDonors.contact_id
       ;
@@ -852,7 +960,7 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
 
     $startOfYear = date('Y') . '0101000000';
     $sql = "
-      SELECT SUM(total_amount) oneOffYearToDate
+      SELECT SUM(net_amount) oneOffYearToDate
       FROM civicrm_contribution cc
       WHERE receive_date >= $startOfYear
       AND is_test=0
@@ -870,8 +978,8 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
   public function calcStatTarget() {
 
     $sql = "
-      SELECT ROUND(SUM(total_amount)/ 500000 * 100) targetPercent,
-             ROUND(SUM((contribution_recur_id IS NOT NULL) * total_amount)/ 500000 * 100) targetPercentRegular
+      SELECT ROUND(SUM(net_amount)/ 500000 * 100) targetPercent,
+             ROUND(SUM((contribution_recur_id IS NOT NULL) * net_amount)/ 500000 * 100) targetPercentRegular
       FROM civicrm_contribution cc
       WHERE receive_date >= $this->endDate - INTERVAL 1 YEAR
           AND receive_date <= $this->endDate
