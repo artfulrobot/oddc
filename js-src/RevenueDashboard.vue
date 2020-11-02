@@ -1,6 +1,19 @@
 <template>
   <div id="revenuedashboard" class="revenuedashboard">
 
+    <h2>Last {{chartMonths}} months’ income</h2>
+    <ul class="months">
+      <li v-for="i in [6, 12, 18, 24, 36, 48]" :key="i">
+        <a href
+           v-show="i !== chartMonths"
+           @click.prevent="chartMonths = i"
+           >{{i}} months</a>
+        <span
+           v-show="i === chartMonths"
+           >{{i}} months</span>
+      </li>
+    </ul>
+
     <area-chart
       :data="incomeAndChurnChartData.data"
       :dataset="incomeAndChurnChartData.dataset"
@@ -9,7 +22,7 @@
       :min="incomeAndChurnChartData.min"
       ></area-chart>
 
-    <h2>Main stats</h2>
+    <h2>Current Key Indicators</h2>
     <div class="bigstats">
       <div>
         <div class="bignums two">
@@ -35,19 +48,36 @@
         </div>
       </div>
     </div>
-    <h2>Quarterly Income Summary</h2>
+
+    <h2>Quarterly Income Summary to-date</h2>
     <quarterly-table :latest="latest" ></quarterly-table>
 
-    <h2>Figures for {{selectedMonth}}</h2>
-    <ul class="months">
-      <li v-for="m in all.filter(m => m.period[2] === 'full')" :key="m.period[0]" >
-        <a href @click.prevent="latestFull = m" v-show="m !== latestFull" >{{ formatDateAsMonthYear(m.period[0]) }}</a>
-        <span  v-show="m === latestFull" >{{ formatDateAsMonthYear(m.period[0]) }}</span>
-      </li>
-    </ul>
+    <h2>Period</h2>
+    <p>Most reports below show figures for a particular month, which you can select here. The <em>Donations</em> report can optionally show figures across a range of months.</p>
+    <label for="range-end">Select month (Range end)</label>
+    <select id="range-end"
+      v-model="latestFull"
+      >
+      <option v-for="(m, i) in fullMonths"
+        :value="m"
+               >{{ formatDateAsMonthYear(m.period[0]) }}</option>
+    </select>
 
+    <h2>Donations in {{ (rangeStart !== '') ? formatDateAsMonthYear(rangeStart.period[0]) + ' - ' + selectedMonth : selectedMonth }}</h2>
 
-    <h2>Sources</h2>
+    <label for="range-start">Range start</label>
+    <select id="range-start"
+      v-model="rangeStart"
+      >
+      <option value="">(Selected month only)</option>
+      <option v-for="m in validRangeStartOptions"
+        :value="m"
+        :disabled="m.period[0] >= latestFull.period[0]"
+               >{{ formatDateAsMonthYear(m.period[0]) }}</option>
+    </select>
+    <br />
+    <br />
+
     <table>
       <thead>
         <tr>
@@ -67,19 +97,20 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="source in ['', 'Email', 'Social', 'Website', 'Other']" :key="source" >
-          <th>{{source ? source : 'All'}}</th>
+        <tr v-for="source in ['All', 'Email', 'Social', 'Website', 'Other']" :key="source" >
+          <th>{{ source }}</th>
           <td v-for="t in [
             'oneOffDonorCount', 'regularDonorCount',
             'oneOffDonorAvgAmount', 'regularDonorAvgAmount',
             'oneOffDonorIncome', 'regularDonorIncome',
             ]" :key="t"
               class="right"
-              >{{formatSourceValue(source, t)}}</td>
+              >{{ donationsTable[source][t] }}</td>
         </tr>
       </tbody>
     </table>
 
+    <h2>Recruitment, Retention for {{selectedMonth}}</h2>
     <div class="bigstats">
       <div>
         <div class="bignums two">
@@ -130,7 +161,7 @@
 
     </div><!-- /.bigstats -->
 
-    <h2>One Off Donations</h2>
+    <h2>One Off Donations in {{selectedMonth}}</h2>
 
     <div class="ood">
       <div class="first"
@@ -167,7 +198,7 @@
       </tbody>
     </table>
 
-    <h2>openTrust Quarterly Income Summary</h2>
+    <h2>openTrust Quarterly Income Summary to-date</h2>
     <quarterly-table :latest="otLatest" ></quarterly-table>
   </div>
 </template>
@@ -176,6 +207,19 @@
 $strongBlue: #0162B7; //= hsl(208, 99%, 36%)
 .revenuedashboard .center { text-align: center; }
 .revenuedashboard .right { text-align: right; }
+
+.period-selectors {
+  display: flex;
+  margin: 0 -1rem;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  &>* {
+    flex: 0 0 auto;
+    padding: 0 1rem;
+  }
+}
+
+// barcharts
 .revenuedashboard .bgbar {
   position: relative;
 }
@@ -303,6 +347,7 @@ export default {
   components: {QuarterlyTable, BgBarchart},
   data() {
     const data = this.config;
+    data.rangeStart = '';
 
     var i = data.all.length - 1;
     data.latest = data.all[i];
@@ -327,9 +372,74 @@ export default {
     data.curve = false;
     data.up = 0;
 
+    data.chartMonths = 18;
+
     return data;
   },
   computed: {
+    validRangeStartOptions() {
+      const opts = this.all.slice(0, Math.max(0, this.selectedMonthIndex));
+      opts.reverse();
+      return opts;
+    },
+    selectedMonthIndex() {
+      return this.all.indexOf(this.latestFull);
+    },
+    rangeStartIndex() {
+      return this.rangeStart === '' ? this.selectedMonthIndex : this.all.indexOf(this.rangeStart);
+    },
+    donationsTable() {
+
+      var aggregates = {};
+      ['All', 'Email', 'Social', 'Website', 'Other'].forEach(source => {
+
+        const sourceStats = {};
+        const sourceKey = (source === 'All') ? '' : 'Source' + source;
+
+        [
+            'oneOffDonorCount', 'regularDonorCount',
+            'oneOffDonorIncome', 'regularDonorIncome',
+        ].forEach(t => {
+
+          sourceStats[t] = 0;
+          for (var monthIndex = this.rangeStartIndex; monthIndex <= this.selectedMonthIndex; monthIndex++) {
+            var m = this.all[monthIndex];
+            sourceStats[t] += parseFloat(m[t + sourceKey] || 0);
+          }
+        });
+
+        // Now calculate average.
+        sourceStats['oneOffDonorAvgAmount'] = (sourceStats['oneOffDonorCount'] > 0)
+          ? sourceStats['oneOffDonorIncome'] / sourceStats['oneOffDonorCount']
+          : null;
+        sourceStats['regularDonorAvgAmount'] = (sourceStats['regularDonorCount'] > 0)
+          ? sourceStats['regularDonorIncome'] / sourceStats['regularDonorCount']
+          : null;
+
+        // Finally, format everything.
+        sourceStats['oneOffDonorCount'] = sourceStats['oneOffDonorCount'].toLocaleString();
+        sourceStats['oneOffDonorIncome'] = '£' + sourceStats['oneOffDonorIncome'].toLocaleFixed(0);
+        sourceStats['regularDonorIncome'] = '£' + sourceStats['regularDonorIncome'].toLocaleFixed(0);
+        sourceStats['regularDonorCount'] = sourceStats['regularDonorCount'].toLocaleString();
+
+        if (sourceStats['oneOffDonorAvgAmount'] !== null) {
+          sourceStats['oneOffDonorAvgAmount'] = '£' + sourceStats['oneOffDonorAvgAmount'].toLocaleFixed(2);
+        }
+
+        if (sourceStats['regularDonorAvgAmount'] !== null) {
+          sourceStats['regularDonorAvgAmount'] = '£' + sourceStats['regularDonorAvgAmount'].toLocaleFixed(2);
+        }
+
+        // Store sourceStats
+        aggregates[source] = sourceStats;
+      });
+      return aggregates;
+    },
+    fullMonths() {
+      const f = this.all.filter(m => m.period[2] === 'full');
+      f.reverse();
+      return f;
+    },
     otLatest() {
       var l = {};
       Object.keys(this.latest).forEach(k => {
@@ -369,10 +479,15 @@ export default {
       };
 
       var min = 0, max=0;
-      this.all.forEach(series => {
-        if (series.period[2] !== 'full') {
-          return;
-        }
+      var l = this.all.length-1;
+      console.log({l, all:this.all, period: this.all[l].period});
+      if (this.all[l].period[2] !== 'full') {
+        // Ignore latest partial data.
+        l--;
+      console.log("dec", {l, all:this.all, period: this.all[l].period});
+      }
+      for (var seriesIndex=Math.max(0, l - this.chartMonths); seriesIndex<=l; seriesIndex++) {
+        var series = this.all[seriesIndex];
         const x = series.period[0];
         min = Math.min(min, series.monthlyChurnAmount);
         d[0].data[x] = parseFloat(series.monthlyChurnAmount);
@@ -380,7 +495,7 @@ export default {
         // Show one off stacked on top of regular.
         d[2].data[x] = parseFloat(series.oneOffDonorIncome) + d[1].data[x];
         max = Math.max(max, d[2].data[x]);
-      });
+      }
 
       // Require negative to be at least 10% of positive. (or the label gets squashed)
       min = Math.min(Math.abs(max) * -0.1, min);
@@ -448,6 +563,13 @@ export default {
     },
     selectedMonth() {
       return this.formatDateAsMonthYear(this.latestFull.period[0]);
+    }
+  },
+  watch: {
+    latestFull: function(val, oldVal) {
+      if (this.rangeStart && this.rangeStart.period[0] >= val.period[0]) {
+        this.rangeStart = '';
+      }
     }
   },
   methods: {

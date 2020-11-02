@@ -346,6 +346,10 @@ function _oddStats1($params) {
  *
  * @param array $params
  *
+ * - nocache If set to 1 then the cache is not used. Normally the results are
+ *           cached if they are for full calendar months.
+ * - months  Default: 12. Months to go back to generate stats for.
+ *
  * @return array API result descriptor
  * @see civicrm_api3_create_success
  * @see civicrm_api3_create_error
@@ -364,7 +368,9 @@ function _oddStats2($params) {
   $today = date('Y-m-d');
 
   // Get first of this month, a year ago
-  $given = new DateTimeImmutable('today - 1 year');
+  $months = empty($params['months']) ? 48 : (int) $params['months'];
+  // $params['nocache'] = 1;
+  $given = new DateTimeImmutable("today - $months month");
   $startOfMonth = $given->modify('first day of');
   $endOfMonth = $startOfMonth->modify('+1 month - 1 second');
   $now = new DateTimeImmutable('today');
@@ -376,29 +382,38 @@ function _oddStats2($params) {
     $endOfMonth = $startOfMonth->modify('+1 month -1 second');
   }
 
-  //$months = [reset($months)]; // xxx
+  $cache = CRM_Utils_Cache::create(['type' => ['SqlGroup'], 'name' => 'revenuedashboard']);
+  //$value = $cache->get($cache_key, 'default'); // Will return default if cached value expired.
+  //$cache->set($cache_key, $data, 60); // Keep value for 60s
+
   foreach ($months as $month) {
-    $sx = new Statx([
-      'startDate' => $month[0],
-      'endDate' => $month[1],
-    ]);
-    $monthStats = $sx->get();
-    /*
-    $s->setStartDate($month[0])->setEndDate($month[1]);
-    $monthStats = $s->getStats([
-      'RegularDonors',
-      'RegularRetentionAnnual',
-      'RegularRetentionMonthly',
-      'RegularRecruitmentAnnual',
-      'RegularRecruitmentMonthly',
-      'OneOffDonors',
-      'OneOffSpecial',
-      'OneOffYearToDate',
-      'Target',
-    ], TRUE);
-     */
-    $monthStats['period'] = $month;
-    $monthStats['period'][] = ($month[1] > $today) ? 'incomplete' : 'full';
+    // Append either 'incomplete' or 'full' to the month specification.
+    $month[] = ($month[1] > $today) ? 'incomplete' : 'full';
+
+    $monthStats = NULL;
+    $loadedFromCache = FALSE;
+    $cacheKey = "$month[0]-$month[1]";
+    if ($month[2] === 'full') {
+      if (empty($params['nocache'])) {
+        $monthStats = $cache->get($cacheKey, NULL);
+        $loadedFromCache = (bool) $monthStats;
+      }
+    }
+
+    if (!$monthStats) {
+      $sx = new Statx([
+        'startDate' => $month[0],
+        'endDate' => $month[1],
+      ]);
+      $monthStats = $sx->get();
+      $monthStats['period'] = $month;
+
+      // Cache the results indefinitely (until explicit cache clear) but no
+      // point doing this if we already fetched them from the cache.
+      if (!$loadedFromCache) {
+        $cache->set($cacheKey, $monthStats);
+      }
+    }
 
     $result[] = $monthStats;
   }
