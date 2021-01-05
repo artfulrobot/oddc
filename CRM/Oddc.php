@@ -121,6 +121,7 @@ class CRM_Oddc {
    * Called once data has been validated and stored in $this->input.
    *
    * This is only called when consent is given.
+   * It's used by the embedded form, not the self hosted form.
    *
    * - create/find contact
    * - create consent activity
@@ -147,7 +148,8 @@ class CRM_Oddc {
       . htmlspecialchars($this->input['return_url'] ?? '')
       . '</p>'
       . '<p>Group: #' . $this->input['mailing_list_id'] . ' '
-      . htmlspecialchars($this->input['mailing_list_name']) . '</p>',
+      . htmlspecialchars($this->input['mailing_list_name']) . '</p>'
+      . '<p>We asked: ' . htmlspecialchars($this->input['consent_invite']) . '</p>',
       'status_id'          => 'Completed',
       'activity_date_time' => date('Y-m-d H:i:s'),
     ]);
@@ -266,6 +268,9 @@ class CRM_Oddc {
     foreach (['street_address', 'city', 'postal_code', 'country'] as $_) {
       $this->input[$_] = $input[$_] ?? '';
     }
+
+    // This is set by oddd__add_page_details so it's safe.
+    $this->input['consent_invite'] = $input['consent_invite'];
   }
 
   /**
@@ -614,6 +619,7 @@ class CRM_Oddc {
   }
   /**
    * Store data common to PayPal and GoCardless donation requests.
+   * on the self-hosted donation pages.
    */
   public function processCommonDonationContactData() {
 
@@ -658,7 +664,8 @@ class CRM_Oddc {
           . htmlspecialchars($this->input['return_url'])
           . '</p>'
           . '<p>Group: #' . $this->input['mailing_list'] . ' '
-          . htmlspecialchars($mailing_list_name) . '</p>',
+          . htmlspecialchars($mailing_list_name) . '</p>'
+          . '<p>We asked: ' . htmlspecialchars($this->input['consent_invite']) . '</p>',
           'status_id'          => 'Completed',
           'activity_date_time' => date('Y-m-d H:i:s'),
         ]);
