@@ -477,11 +477,8 @@ GROUP BY source WITH ROLLUP
   public function calcStatQuarterlySummary() {
 
     // Calculate quarter cut-offs.
-    $result = Civi::settings()->get('fiscalYearStart');
-      // {"M": "1", "d": "1"}
-    $fiscalYearStartYear = date('Y') - ((date('m-d') < "$result[M]-$result[d]") ? 1 : 0);
     $datetimes = [
-      'thisYear' => new DateTimeImmutable("$fiscalYearStartYear-$result[M]-$result[d]"),
+      'thisYear' => $this->getThisFiscalYearStart(),
     ];
     $datetimes['lastYear'] = $datetimes['thisYear']->modify('-1 year');
     $dateSQL = ['lastYearToDateSQL' => (new DateTimeImmutable('today - 1 year'))->format('Ymd')];
@@ -570,11 +567,8 @@ GROUP BY fy, quarter, donorType WITH ROLLUP
   public function calcStatQuarterlySummaryOt() {
 
     // Calculate quarter cut-offs.
-    $result = Civi::settings()->get('fiscalYearStart');
-      // {"M": "1", "d": "1"}
-    $fiscalYearStartYear = date('Y') - ((date('m-d') < "$result[M]-$result[d]") ? 1 : 0);
     $datetimes = [
-      'thisYear' => new DateTimeImmutable("$fiscalYearStartYear-$result[M]-$result[d]"),
+      'thisYear' => $this->getThisFiscalYearStart(),
     ];
     $datetimes['lastYear'] = $datetimes['thisYear']->modify('-1 year');
     $dateSQL = ['lastYearToDateSQL' => (new DateTimeImmutable('today - 1 year'))->format('Ymd')];
@@ -1043,5 +1037,16 @@ LEFT JOIN previousGiving ON thisMonthsDonors.contact_id = previousGiving.contact
     }
     $stats['oneOffTopCountries'] = $results;
     $this->statx->setOutputs($stats);
+  }
+  /**
+   * @return DateTimeImmutable object for the first moment of this fiscal year.
+   */
+  public function getThisFiscalYearStart() {
+    $result = Civi::settings()->get('fiscalYearStart');
+    // Ensure zero padded
+    $m = substr("0$result[M]", -2);
+    $d = substr("0$result[d]", -2);
+    $year = date('Y') - ((date('m-d') < "$m-$d") ? 1 : 0);
+    return new DateTimeImmutable("$year-$m-$d");
   }
 }
