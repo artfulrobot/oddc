@@ -477,3 +477,45 @@ function oddc__wrap_mailing_preview($event) {
   $apiResponse['values']['body_html'] = preg_replace('/{dearyou.*?}/', 'Dear Supporter', $apiResponse['values']['body_html']);
   $event->setResponse($apiResponse);
 }
+/**
+ * Add some links to the nav menus.
+ *
+ * Implements hook_civicrm_navigationMenu().
+ *
+ * @link https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_navigationMenu
+ */
+function oddc_civicrm_navigationMenu(&$menu) {
+  _oddc_civix_insert_navigation_menu($menu, 'Reports', [
+    'label' => E::ts('oD Email Dashboard'),
+    'name' => 'oddc_email_dashboard',
+    'url' => 'civicrm/dashboard/email',
+    'permission' => 'access CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _oddc_civix_insert_navigation_menu($menu, 'Reports', [
+    'label' => E::ts('oD CiviMail Email Conversions'),
+    'name' => 'oddc_mailing_conversion',
+    'url' => 'civicrm/odmailingconversion',
+    'permission' => 'access CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _oddc_civix_insert_navigation_menu($menu, 'Reports', [
+    'label' => E::ts('oD Contribution Explorer'),
+    'name' => 'oddc_dataviz_oddd',
+    'url' => 'civicrm/dataviz/odd',
+    'permission' => 'access CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _oddc_civix_insert_navigation_menu($menu, 'Reports', [
+    'label' => E::ts('oD Revenue Dashboard'),
+    'name' => 'oddc_revenue_dashboard',
+    'url' => 'civicrm/revenuedashboard',
+    'permission' => 'access CiviCRM',
+    'operator' => 'OR',
+    'separator' => 0,
+  ]);
+  _oddc_civix_navigationMenu($menu);
+}
