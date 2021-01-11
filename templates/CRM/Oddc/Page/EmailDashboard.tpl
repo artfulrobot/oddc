@@ -97,7 +97,7 @@
     </tr>
   </thead>
   <tbody>
-  {foreach from=$selectedListCounts as key="group_id" item="row"}
+  {foreach from=$selectedListCounts key="group_id" item="row"}
     <tr> <td>{$row.title}</td> <td>{$row.count}</td><td>{$row.percent}</td> </tr>
   {/foreach}
   </tbody>
@@ -228,13 +228,26 @@ CRM.$(() => {
       + (numericData*100/maxesColMap[meta.col]) + '%;"></div><div class="oddc-cellbarchart__text">' + data + '</div></div>';
   };
 
+  const backgroundBarchartMailingGroups = function(data, type, row, meta) {
+
+    if (type != 'display') {
+      return data;
+    }
+    // Display case:
+
+    const numericData = parseFloat(data.replace(/[^0-9.]+/g, ''));
+    // Calculate total for this column.
+    return '<div class="oddc-cellbarchart"><div class="oddc-cellbarchart__bar" style="width:'
+      + (numericData) + '%;"></div><div class="oddc-cellbarchart__text">' + data + '</div></div>';
+  };
+
 
   CRM.$('#subscribers-by-list').dataTable({
     pageLength: 25,
     order: [[1, 'desc']],
     columnDefs: [
       { targets: 1, className: 'dt-right' },
-      { targets: 2, render: backgroundBarchart }
+      { targets: 2, render: backgroundBarchartMailingGroups }
     ]
   });
 
