@@ -1,0 +1,7 @@
+[
+  {
+    "name": "od_opt_out_propagate",
+    "label": "oD handle email optout",
+    "class_name": "CRM_CivirulesActions_OptOutPropagate"
+  }
+]

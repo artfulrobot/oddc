@@ -135,28 +135,18 @@ class CRM_Oddc {
     // Store name, email.
     $this->getOrCreateContact();
 
-    // Create an activity.
-    $consent_activity_type_id = civicrm_api3('OptionValue', 'get', ['sequential' => 1, 'option_group_id' => "activity_type", 'name' => "marketing_consent"])['values'][0]['value'] ?? 0;
-
-    civicrm_api3('Activity', 'create', [
-      'source_contact_id'  => $this->contact_id,
-      'activity_type_id'   => $consent_activity_type_id,
-      'target_id'          => $this->contact_id,
-      'subject'            => 'Gave consent on signup page',
-      'location'           => 'node/' . $this->input['donation_page_nid'] . ' ' . $this->input['source'],
-      'details'            => '<p>Donation page at '
+    $this->drySignup(
+      (int) $this->contact_id,
+      (int) $this->input['mailing_list_id'],
+      'Gave consent on signup page',
+      'node/' . $this->input['donation_page_nid'] . ' ' . $this->input['source'],
+      '<p>Donation page at '
       . htmlspecialchars($this->input['return_url'] ?? '')
       . '</p>'
       . '<p>Group: #' . $this->input['mailing_list_id'] . ' '
       . htmlspecialchars($this->input['mailing_list_name']) . '</p>'
-      . '<p>We asked: ' . htmlspecialchars($this->input['consent_invite']) . '</p>',
-      'status_id'          => 'Completed',
-      'activity_date_time' => date('Y-m-d H:i:s'),
-    ]);
-
-    // Add the contact to the list.
-    $contact_ids = [$this->contact_id];
-    CRM_Contact_BAO_GroupContact::addContactsToGroup($contact_ids, $this->input['mailing_list_id']);
+      . '<p>We asked: ' . htmlspecialchars($this->input['consent_invite']) . '</p>'
+    );
 
     return ['success' => 1, 'contact_id' => $this->contact_id];
   }
@@ -1156,6 +1146,61 @@ class CRM_Oddc {
       }
     }
     return $results;
+
+  }
+  /**
+   * This is DRY code trying to centralise the logic of signing someone up.
+   *
+   * - Adds a consent activity
+   * - Adds them to $groupID (unless it's null)
+   * - Adds them to the general group.
+   * - Clears their do not email and bulk opt-out flags.
+   */
+  public static function drySignup(
+    int $contactID,
+    ?int $groupID,
+    string $consentSubject, string $consentDetails, string $consentLocation, ?string $when=NULL
+  ) {
+
+    // Look them up and clear is_opt_out and do_not_email
+    $dao = new CRM_Contact_BAO_Contact();
+    $dao->id = $contactID;
+    if (!$dao->find(1)) {
+      // This should not happen, coding error if it does.
+      throw new \RuntimeException("Could not find contact $contactID, passed into drySignup for group $groupID");
+    }
+    $needsSaving = FALSE;
+    if ($dao->is_opt_out) {
+      $dao->is_opt_out = 0;
+      $needsSaving = TRUE;
+    }
+    if ($dao->do_not_email) {
+      $dao->do_not_email = 0;
+      $needsSaving = TRUE;
+    }
+    if ($needsSaving) {
+      $dao->save();
+    }
+
+    civicrm_api3('Activity', 'create', [
+      'source_contact_id'  => $contactID,
+      'target_id'          => $contactID,
+      'activity_type_id'  => "marketing_consent",
+      'subject'            => $consentSubject,
+      'location'           => $consentLocation,
+      'details'            => $consentDetails,
+      'status_id'          => 'Completed',
+      'activity_date_time' => $when ? $when : date('Y-m-d H:i:s'),
+    ]);
+
+    // Add the contact to the list.
+    $contactIDs = [$contactID];
+    if ($groupID) {
+      CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, $groupID);
+    }
+
+    // Always add them to the general list, too.
+    CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, oD_GENERAL_EMAIL_GROUP_ID);
 
   }
 }
