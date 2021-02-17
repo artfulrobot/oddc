@@ -32,3 +32,14 @@ If the Mailing has a Campaign of type "Direct Mail" then people who unsubscribe
 get auto tagged with "No fundraising emails"
 
 Implemented with `hook_civicrm_unsubscribeGroups`
+
+## Automation: CiviRules
+
+There's a CiviRules Action defined called `OptOutPropagate`. You need to
+set up a civirule on "Individual is changed" and conditions:
+
+- Field Value Comparison: `Individual.is_opt_out = 1`
+- OR Field Value Comparison: `Individual.do_not_email = 1`
+
+It means when someone opts-out they are removed from all mailing lists
+[that are flagged as needing sync with Klaviyo]

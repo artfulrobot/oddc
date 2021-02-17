@@ -19,7 +19,7 @@ class CRM_Oddc_Upgrader extends CRM_Oddc_Upgrader_Base {
   public function ensureCiviRuleActions() {
     if (method_exists('CRM_Civirules_Utils_Upgrader', 'insertActionsFromJson')) {
       Civi::log()->info("CiviRules action install for oddc");
-      CRM_Civirules_Utils_Upgrader::insertActionsFromJson($this->extensionDir . DIRECTORY_SEPARATOR . 'civirules_actions.json');
+      CRM_Civirules_Utils_Upgrader::insertActionsFromJson($this->extensionDir . DIRECTORY_SEPARATOR . 'civirules_action.json');
     }
     else {
       Civi::log()->warn("CiviRules not detected; oddc cannot add action");
