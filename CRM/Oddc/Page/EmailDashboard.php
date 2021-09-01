@@ -11,6 +11,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
   protected $date_range_type = '';
   protected $date_range_start = '';
   protected $date_range_end = '';
+  protected $inc_pending = FALSE;
   /** comes from getSubscribersByNumberOfSubscriptions */
   protected $total_unique;
 
@@ -25,6 +26,8 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
 
     // Store date_range_type and calculate/parse the actual date range to be used.
     $this->date_range_type = $_GET['date_range_type'] ?? 'last_6_months';
+    // This is sent as a checkbox, so absense means no.
+    $this->inc_pending = !empty($_GET['inc_pending']);
     function parseDate($d) {
       if ($d) {
         $t = strtotime($d);
@@ -60,24 +63,41 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
       break;
     }
 
+    $cache = CRM_Utils_Cache::create(['type' => ['SqlGroup'], 'name' => 'emailDashboard']);
+    $allCalcs = $cache->get('emailDashboard', NULL);
+    if (empty($allCalcs)) {
+      // Nothing in cache, calc now.
+
+      // getAllMailingLists() also rebuilds smart groups.
+      $t=microtime(TRUE);
+      $allCalcs['allLists'] = $this->getAllMailingLists();
+      Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getAllMailingLists')); $t=microtime(TRUE);
+      $allCalcs['subscriptions'] = $this->getSubscribersByNumberOfSubscriptions();
+      Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSubscribersByNumberOfSubscriptions')); $t=microtime(TRUE);
+      $allCalcs['total_unique'] = $this->total_unique;
+      $allCalcs['active'] = $this->getActiveSubscribers();
+      Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getActiveSubscribers')); $t=microtime(TRUE);
+      $allCalcs['selectedListCounts'] =  $this->getSelectedListCounts();
+      Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSelectedListCounts')); $t=microtime(TRUE);
+
+      // Cache for 5 mins
+      $cache->set('emailDashboard', $allCalcs, 300);
+    }
 
     // getAllMailingLists() also rebuilds smart groups.
-    $t=microtime(TRUE);
-    $this->assign('allLists', $this->getAllMailingLists());
-    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getAllMailingLists')); $t=microtime(TRUE);
-    $subscriptions = $this->getSubscribersByNumberOfSubscriptions();
-    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSubscribersByNumberOfSubscriptions')); $t=microtime(TRUE);
-    $this->assign('currentTotalUniqueSubscribers', number_format($this->total_unique));
-    $this->assign('subscribersByListCount', $subscriptions);
-    $active = $this->getActiveSubscribers();
-    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getActiveSubscribers')); $t=microtime(TRUE);
-    $this->assign('activeSubscribers', number_format($active));
-    $this->assign('activeSubscribersPc', number_format($active*100/$this->total_unique, 1));
-    $this->assign('selectedListCounts', $this->getSelectedListCounts());
-    Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getSelectedListCounts')); $t=microtime(TRUE);
+    $this->assign('allLists', $allCalcs['allLists']);
+    $this->assign('currentTotalUniqueSubscribers', number_format($allCalcs['total_unique']));
+    $this->assign('subscribersByListCount', $allCalcs['subscriptions']);
+    $this->assign('activeSubscribers', number_format($allCalcs['active']));
+    $this->assign('activeSubscribersPc', number_format($allCalcs['active']*100/$allCalcs['total_unique'], 1));
+    $this->assign('selectedListCounts', $allCalcs['selectedListCounts']);
+
+    // Contribs conversion table.
     $this->assign('date_range_type', $this->date_range_type);
+    $this->assign('inc_pending', $this->inc_pending);
     $this->assign('date_range_start', $this->date_range_start ? date('j M Y', strtotime($this->date_range_start)) : '');
     $this->assign('date_range_end', $this->date_range_end ? date('j M Y', strtotime($this->date_range_end)) : '');
+    $t=microtime(TRUE);
     $data = $this->getMailingsData();
     Civi::log()->info('Took ' . (microtime(TRUE) - $t . 's for getMailingsData')); $t=microtime(TRUE);
     $this->assign('mailings', $data['mailings']);
@@ -251,6 +271,10 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
 
 
     // Now add in conversion rates.
+
+    // If we are to include pending, we count pending and completed. Otherwise only completed.
+    $inc_pending = $this->inc_pending ? "cc.contribution_status_id IN (1, 2)" : "cc.contribution_status_id = 1";
+
     $sql_params = [];
     $sql = "SELECT
         source,
@@ -267,7 +291,7 @@ class CRM_Oddc_Page_EmailDashboard extends CRM_Core_Page {
         SUM(net_amount) amount,
         COUNT(DISTINCT cc.contact_id) contributors
       FROM civicrm_contribution cc
-      WHERE is_test = 0 AND source REGEXP '^mailing[0-9]+'
+      WHERE is_test = 0 AND source REGEXP '^mailing[0-9]+' AND $inc_pending
       GROUP BY source, recur
     ";
     $stats_dao = CRM_Core_DAO::executeQuery($sql, $sql_params);
