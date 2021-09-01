@@ -20,6 +20,17 @@ function oddc_civicrm_config(&$config) {
 }
 
 /**
+ * Implements hook_civicrm_container().
+ *
+ * @link https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_container/
+ */
+function oddc_civicrm_container($container) {
+  // https://docs.civicrm.org/dev/en/latest/hooks/usage/symfony/
+  $container->findDefinition('dispatcher')
+            ->addMethodCall('addListener', ['civi.inlaysignup.submission', 'oddc_inlaysignup_submission_handler']);
+}
+
+/**
  * Implements hook_civicrm_xmlMenu().
  *
  * @link http://wiki.civicrm.org/confluence/display/CRMDOC/hook_civicrm_xmlMenu
@@ -518,4 +529,103 @@ function oddc_civicrm_navigationMenu(&$menu) {
     'separator' => 0,
   ]);
   _oddc_civix_navigationMenu($menu);
+}
+/**
+ *
+ * @param object $event is like:
+ * {
+ *   input: { ... }, Validated input (first_name, last_name, email)
+ *   inlay: \Civi\Inlay\Type instance,
+ *   contactID: (int) found/created contact.
+ * }
+ */
+function oddc_inlaysignup_submission_handler($event) {
+  // We can overwrite data
+  //$event->fname = 'Wilma Flintstone';
+  // We can alter anything passed by reference.
+  //$event->votes++;
+  // To return a value you need to pass it in an array like so:
+  //$event->addReturnValues(['Successfully recorded votes!']);
+
+  $inlayConfig = $event->inlay->getConfig();
+  $mailingGroupID = (int) ($inlayConfig['mailingGroup'] ?? 0);
+  if ($mailingGroupID) {
+    $groupName = \Civi\Api4\Group::get(FALSE)
+      ->setSelect(['title'])
+      ->addWhere('id', '=', $mailingGroupID)
+      ->execute()->first()['title'] ?? '(unknown group - deleted?!)';
+    $group = "<p>Added to group " . htmlspecialchars($groupName) . " ($mailingGroupID). </p>";
+  }
+  else {
+    $group = '';
+  }
+  Civi::log()->info(__FUNCTION__ . " input: " . json_encode($event->input, JSON_PRETTY_PRINT));
+
+  $source = $event->input['source'];
+
+  CRM_Oddc::drySignup(
+    $event->contactID,
+    $mailingGroupID,
+    'Signed up using website pop-up',
+    $group . "<p>Title: "
+    . htmlspecialchars($inlayConfig['title']) . '</p>'
+    . "<p>Intro:</p><blockquote>" . $inlayConfig['introHTML'] . '</blockquote>',
+    $source
+  );
+  // The drySignup() call handles adding to the group, so tell the inlay not to do it as well.
+  $event->handledByHook['addToGroup'] = TRUE;
+
+  // Now send special Klaviyo track request.
+  $glue = Civi\Klaviyo\Glue::singleton();
+  $email = $glue->ensureKlaviyoContactRecord($event->contactID);
+  $customerProperties = [ '$email' => $email ];
+  $eventProperties = [
+    'groupName'  => $groupName,
+    'popupTitle' => $inlayConfig['title'],
+    'popupIntro' => $inlayConfig['introHTML'],
+    'sourceURL'  => $source,
+  ];
+  // Separate out utm params.
+  $_ = parse_url($source)['query'] ?? '';
+  if ($_) {
+    $query = [];
+    parse_str($_, $query);
+    // Use utm params if passed (they won't be until/unless Wagtail starts sending them).
+    foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $_) {
+      if (!empty($query[$_])) {
+        $eventProperties[$_] = $query[$_];
+      }
+    }
+  }
+
+  $glue->api->track($customerProperties, 'Newsletter signup', $eventProperties);
+}
+
+/**
+ * Implements hook_civicrm_GoCardlessSubscriptionCancelled
+ */
+function oddc_civicrm_GoCardlessSubscriptionCancelled(int $contributionRecurID) {
+  $result = civicrm_api3('ContributionRecur', 'get', [
+    'sequential' => 1,
+    'return' => ['contact_id', "amount", "financial_type_id.name", "payment_instrument_id.label", "payment_processor_id.name"],
+    'id' => $contributionRecurID,
+    'api.Contribution.get' => ['options' => ['limit' => 1], 'return' => ["custom_66", "custom_69"], "sequential" => 1],
+  ])['values'][0];
+
+  $glue = Civi\Klaviyo\Glue::singleton();
+  $customerProperties = ['$email' => $glue->ensureKlaviyoContactRecord($result['contact_id'])];
+
+  $eventProperties = [
+    '$event_id' => 'contribution_recur_id_cancelled_' . $contributionRecurID,
+    'cancelledMonthlyAmount' => $result['amount'] ?? '',
+    'financialType' => $result["financial_type_id.name"], // ex. Donation - openDemocracy
+    'paymentInstrument' => $result["payment_instrument_id.label"] ?? '',
+    'paymentProcessor' => $result['payment_processor_id.name'] ?? '', // Probably should not need this
+    'oDProject' => $result['api.Contribution.get']['values'][0]['custom_66'] ?? '',
+    'donationPageNid' => $result['api.Contribution.get']['values'][0]['custom_69'] ?? '',
+  ];
+
+  Civi::log()->info("Sending Cancelled Regular Givigin event:\n". json_encode(['customerProperties' => $customerProperties, 'eventProperties' => $eventProperties], JSON_PRETTY_PRINT));
+
+  $glue->api->track($customerProperties, 'Cancelled Regular Giving', $eventProperties);
 }

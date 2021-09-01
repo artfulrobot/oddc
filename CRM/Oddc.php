@@ -274,11 +274,9 @@ class CRM_Oddc {
   public function routeToPaymentProcessor() {
 
     if ($this->input['geo'] === 'GB' && $this->input['is_recur']) {
-      // GoCardless.
       $method = 'GoCardless';
     }
     else {
-      // PayPal.
       $method = 'PayPal';
     }
 
@@ -294,10 +292,16 @@ class CRM_Oddc {
     $this->processCommonDonationContactData();
 
     $method = "process$method";
-    return $this->$method();
+    $url = $this->$method();
+
+    $this->sendStartedCheckoutMetric($method);
+
+    return $url;
   }
   /**
    * Get a redirect URL.
+   *
+   * Called in routeToPaymentProcessor
    *
    * @return string URL
    */
@@ -440,6 +444,8 @@ class CRM_Oddc {
   /**
    * Get a redirect URL.
    *
+   * Called in routeToPaymentProcessor
+   *
    * @return string URL
    */
   protected function processGoCardless() {
@@ -467,7 +473,10 @@ class CRM_Oddc {
     ];
 
     // Create Redirect Flow.
-    $redirect_flow = $this->payment_processor->getRedirectFlow($params);
+
+    /** @var CRM_Core_Payment_GoCardless */
+    $gcPaymentProcessorObject = $this->payment_processor;
+    $redirect_flow = $gcPaymentProcessorObject->getRedirectFlow($params);
 
     // Initialise session storage.
     if (!isset($_SESSION['odd_gcrf'])) {
@@ -486,6 +495,39 @@ class CRM_Oddc {
 
     return ['url' => $redirect_flow->redirect_url];
   }
+  /**
+   * Send Started Checkout metric for Klaviyo
+   *
+   */
+  public function sendStartedCheckoutMetric(string $paymentService) {
+    $glue = Civi\Klaviyo\Glue::singleton();
+    $customerProperties = [
+      '$email'      => $glue->ensureKlaviyoContactRecord($this->contact_id),
+    ];
+    $categories = (!empty($this->input['project'])) ? [$this->input['project']] : [];
+    $eventProperties = [
+      // '$event_id'...
+      '$value'      => $this->input['amount'],
+      'ItemNames'   => [$this->input['financial_type_id']],
+      'CheckoutURL' => $this->input['return_url'],
+      'Categories'  => $categories,
+      'Items'       => [[
+        // Civi stuff
+        'paymentInstrument' => $paymentService,
+        'kind'              => $this->input['is_recur'] ? 'Recurring' : 'One-Off',
+        // Klaviyo stuff
+        'ProductName'       => $this->input['financial_type_id'],
+        'ProductCategories' => $categories,
+        'ImageURL'          => 'https://support.opendemocracy.net/sites/default/files/oD_logo.svg',
+        'ProductURL'        => $this->input['return_url'],
+        'RowTotal'          => $this->input['amount'],
+        'ItemPrice'         => $this->input['amount'],
+        'Quantity'          => 1,
+      ]]
+    ];
+    $glue->api->track($customerProperties, 'Started Checkout', $eventProperties);
+  }
+
   /**
    * Create the subscription.
    *
@@ -575,6 +617,7 @@ class CRM_Oddc {
     $this->upgradesActions($this->input);
 
     $this->extractDataForAnalyticsToSession($this->input);
+    $this->sendCompletedPaymentSetUp('GoCardless', $this->input);
   }
   /**
    * Find or create CiviCRM contact.
@@ -703,10 +746,32 @@ class CRM_Oddc {
 
     $this->extractDataForAnalyticsToSession($input);
 
+    $this->sendCompletedPaymentSetUp('PayPal', $input);
+
     // Clean up session data a bit as it is no longer needed.
     unset($_SESSION['oddc_paypal_contribs'][$input['contributionID']]);
 
   }
+  /**
+   * Send Completed Payment Set Up metric.
+   *
+   * This metric records that the payment was successfully set-up on the
+   * payment processor; money may not have come in yet but at least it looks
+   * OK.
+   *
+   */
+  public function sendCompletedPaymentSetUp(string $paymentService, array $input) {
+    $glue = Civi\Klaviyo\Glue::singleton();
+    $customerProperties = [
+      '$email'      => $glue->ensureKlaviyoContactRecord($input['contactID']),
+    ];
+    $eventProperties = [
+      'paymentInstrument' => $paymentService,
+      'kind'              => $this->input['is_recur'] ? 'Recurring' : 'One-Off',
+    ];
+    $glue->api->track($customerProperties, 'Completed Payment Set-up', $eventProperties);
+  }
+
   /**
    * Send thank you email.
    *
@@ -1155,6 +1220,7 @@ class CRM_Oddc {
    * - Adds them to $groupID (unless it's null)
    * - Adds them to the general group.
    * - Clears their do not email and bulk opt-out flags.
+   * - This is wired up to Klaviyo.
    */
   public static function drySignup(
     int $contactID,
@@ -1185,7 +1251,7 @@ class CRM_Oddc {
     civicrm_api3('Activity', 'create', [
       'source_contact_id'  => $contactID,
       'target_id'          => $contactID,
-      'activity_type_id'  => "marketing_consent",
+      'activity_type_id'   => "marketing_consent",
       'subject'            => $consentSubject,
       'location'           => $consentLocation,
       'details'            => $consentDetails,
@@ -1193,14 +1259,50 @@ class CRM_Oddc {
       'activity_date_time' => $when ? $when : date('Y-m-d H:i:s'),
     ]);
 
-    // Add the contact to the list.
+    // Add the contact to the CiviCRM group, if one specified.
     $contactIDs = [$contactID];
     if ($groupID) {
       CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, $groupID);
     }
 
-    // Always add them to the general list, too.
+    // Always add them to the general group, too.
     CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, oD_GENERAL_EMAIL_GROUP_ID);
 
+
+    // Now pass data to Klaviyo
+
+    // Ensure we have a klaviyo email entry for them.
+    $glue = Civi\Klaviyo\Glue::singleton();
+    $email = $glue->ensureKlaviyoContactRecord($contactID);
+    $lists = $glue->getGroupsToPushToLists();
+
+    try {
+      // Add them to the group list, if it exists.
+      if ($groupID) {
+        $listID = $lists[$groupID]['listID'] ?? NULL;
+        if ($listID) {
+          Civi::log()->info(__FUNCTION__ . " Adding email '$email' in group $groupID to list '$listID'");
+          $glue->api->listAdd($listID,[['email' => $email]]);
+        }
+        else {
+          Civi::log()->info(__FUNCTION__ . " failed to find list for group $groupID");
+        }
+      }
+
+      // Add them to the general list
+      $groupID = oD_GENERAL_EMAIL_GROUP_ID;
+      $listID = $lists[$groupID]['listID'] ?? NULL;
+      if ($listID) {
+        Civi::log()->info(__FUNCTION__ . " Adding email '$email' in group $groupID to list '$listID'");
+        $glue->api->listAdd($listID, [['email' => $email]]);
+      }
+      else {
+        Civi::log()->info(__FUNCTION__ . " failed to find list for group $groupID");
+      }
+    }
+    catch (\Exception $e) {
+      Civi::log()->error(__FUNCTION__ . " failed to add to Klaviyo: " . $e->getMessage(), ['exception' => $e]);
+    }
   }
+
 }
