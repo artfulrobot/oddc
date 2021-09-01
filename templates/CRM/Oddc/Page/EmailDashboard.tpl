@@ -132,6 +132,15 @@
     <span><input name="date_range_end" value="{$date_range_end}"/></span>
   </div>
 
+  <div >
+    <label for="inc_pending"><input id="inc_pending" type="checkbox" name="inc_pending" {if $inc_pending}checked{/if} /> Include pending contributions</label>
+    <p style="font-size: 0.825rem">If you include pending contibutions, you’ll see
+    an over estimate of donors/income as it will include abandoned
+    contributions. However, if you don’t choose to include pending
+    contributions you’ll exclude new direct debits, which could mean the
+    conversion rates are underestimated.</p>
+  </div>
+
   <input type="submit" value="Update" />
 </form>
 
