@@ -648,7 +648,23 @@ class CRM_Oddc {
         ]);
       }
     }
+
+    $this->ensureEmailNotOnHold();
+
     $this->contact_id = $contact['id'];
+  }
+  /**
+   * If the email is found to be on hold, release this hold now.
+   */
+  public function ensureEmailNotOnHold() {
+    if (!empty($this->input['email'])) {
+      Civi\Api4\Email::update(FALSE)
+        ->addValue('on_hold', 0)
+        ->addValue('reset_date', date('Y-m-d H:i:s'))
+        ->addValue('hold_date', NULL)
+        ->addWhere('email', '=', $this->input['email'])
+        ->execute();
+    }
   }
   /**
    * Store data common to PayPal and GoCardless donation requests.
