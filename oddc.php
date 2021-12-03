@@ -561,7 +561,19 @@ function oddc_inlaysignup_submission_handler($event) {
   }
   Civi::log()->info(__FUNCTION__ . " input: " . json_encode($event->input, JSON_PRETTY_PRINT));
 
-  $source = $event->input['source'];
+  $source = $possiblyTruncatedSource = $event->input['source'];
+  $maxLen = 512;
+  if (mb_strlen($source) > $maxLen) {
+    $possiblyTruncatedSource = mb_substr($source, 0, $maxLen);
+    Civi::log()->warning("Truncated the following on contact $event->contactID\n"
+      . json_encode($source) . "\n"
+      . json_encode($possiblyTruncatedSource));
+  }
+
+  // Hack 11 Oct 2021 for Matt.
+  if (preg_match('@^https://www.opendemocracy.net/en/(north-africa-west-asia|tagged/middle-east-north-africa)/@', $source)) {
+    $mailingGroupID = 9; /* Newsletter: North Africa, West Asia */
+  }
 
   CRM_Oddc::drySignup(
     $event->contactID,
@@ -570,7 +582,7 @@ function oddc_inlaysignup_submission_handler($event) {
     $group . "<p>Title: "
     . htmlspecialchars($inlayConfig['title']) . '</p>'
     . "<p>Intro:</p><blockquote>" . $inlayConfig['introHTML'] . '</blockquote>',
-    $source
+    $possiblyTruncatedSource /* stored in location */
   );
   // The drySignup() call handles adding to the group, so tell the inlay not to do it as well.
   $event->handledByHook['addToGroup'] = TRUE;

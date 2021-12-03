@@ -21,6 +21,9 @@
     <ver>5.0</ver>
   </compatibility>
   <comments>This is a custom module not of any use to anyone else.</comments>
+  <classloader>
+    <psr4 prefix="Civi\" path="Civi"/>
+  </classloader>
   <civix>
     <namespace>CRM/Oddc</namespace>
   </civix>

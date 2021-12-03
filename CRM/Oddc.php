@@ -1,4 +1,5 @@
 <?php
+use Civi\Oddc\Cache;
 
 class CRM_Oddc {
   const API_CUSTOM_FIELD_CAMPAIGN_FUNDING_TARGET = 'custom_67';
@@ -311,7 +312,7 @@ class CRM_Oddc {
     $payment_processor_config = $this->payment_processor->getPaymentProcessor();
 
     // Create placeholder pending contribution records ------------------------------------------------------------------
-    $invoice_id = md5(uniqid(rand())); // Used for both the contribution and the contributionRecur records.
+    $invoice_id = $this->createUid(); // Used for both the contribution and the contributionRecur records.
 
     if ($this->input['is_recur']) {
       // Recurring contribution. Create recur record.
@@ -358,6 +359,7 @@ class CRM_Oddc {
       ['params_used' => json_encode($contrib_params, JSON_PRETTY_PRINT),
        'input_data'=> json_encode($this->input, JSON_PRETTY_PRINT)]);
     $contribution = civicrm_api3('Contribution', 'create', $contrib_params);
+
     // Store the Contribution ID in session data so that the thank you page can send an email.
     // The contribution ID is passed in as contributionID on the success return URL.
     // By checking that the received contributionID is on this session var we can be sure that
@@ -367,6 +369,10 @@ class CRM_Oddc {
     }
     // Store the input on the session - this helps us email the right email later.
     $_SESSION['oddc_paypal_contribs'][$contribution['id']] = $this->input;
+    // Save on cache with the invoice ID as key. This gives us a way to access the email
+    // address that they have just given on completion, so we send thank you to that
+    // (and not, say, another email address we have for them, or their paypal email).
+    Cache::setCacheVal($invoice_id, $this->input);
 
     // We can pass various parameters through as 'custom'. (max 256 chars) I think paypal sends these back at the end.
     $custom = ['module' => 'contribute', 'contactID' => $this->contact_id, 'contributionID' => $contribution['id']];
@@ -376,6 +382,8 @@ class CRM_Oddc {
 
     $ipn_url = CRM_Utils_System::url('civicrm/payment/ipn/' . $payment_processor_config['id'], [], TRUE, NULL, FALSE);
     $config = CRM_Core_Config::singleton();
+    // We add the invoice ID into the return URL because otherwise requests to the completion
+    // URL could be brute forced with a loop on integer contribution IDs.
     $paypalParams = [
       'business'           => $payment_processor_config['user_name'],
       'notify_url'         => $ipn_url,
@@ -391,7 +399,7 @@ class CRM_Oddc {
       'charset'            => 'UTF-8',
       'custom'             => json_encode($custom),
       'bn'                 => 'CiviCRM_SP',
-      'return'             => $this->getUrlWithParams(['result' => 1, 'contributionID' => $contribution['id']]),
+      'return'             => $this->getUrlWithParams(['result' => 1, 'contributionID' => $contribution['id'], 'invoiceID' => $invoice_id]),
       'cancel_return'      => $this->input['return_url'],
     ];
     Civi::log()->info("Oddc: Creating a paypal callback URL with params:", $paypalParams);
@@ -440,6 +448,21 @@ class CRM_Oddc {
     $paypalURL = "{$url}{$sub}?$uri";
 
     return ['url' => $paypalURL];
+  }
+  /**
+   * Create a compact, prefixed hash.
+   *
+   * Creates a 12 character random string appended to $prefix.
+   *
+   * This is base62 and can be used in urls without encoding.
+   */
+  public static function createUid(string $prefix = ''):string {
+    $uid = '';
+    do {
+      $uid .= preg_replace('@[/+]@', '', base64_encode(random_bytes(18)));
+    } while (strlen($uid) < 12);
+
+    return $prefix . substr($uid, 0, 12);
   }
   /**
    * Get a redirect URL.
@@ -734,6 +757,7 @@ class CRM_Oddc {
       "Oddc::completePayPal. \nGET: {input}\n\nSESSION: {session}",
       [
         'input'   => json_encode($input, JSON_PRETTY_PRINT),
+        'query'   => json_encode($_GET, JSON_PRETTY_PRINT),
         'session' => json_encode($_SESSION['oddc_paypal_contribs'] ?? NULL, JSON_PRETTY_PRINT)
       ]
     );
@@ -747,14 +771,27 @@ class CRM_Oddc {
     // Move contents into our input.
     $input += $custom;
 
-    // We require that the contribution ID matches one on session.
-    if (empty($input['contributionID']) || empty($_SESSION['oddc_paypal_contribs'][$input['contributionID']])) {
-      Civi::log()->error("Oddc::completePayPal. Input contributionID not found on session. Will not send email.", []);
-      return;
-    }
+    if (empty(!$input['contributionID']) && !empty($_GET['invoiceID'])) {
+      // NEW
+      // Verify the invoice ID matches the contribution ID.
+      $cachedData = Cache::getCacheVal((string) $_GET['invoiceID']);
+      if (!empty($cachedData['email'])) {
+        Civi::log()->info("Oddc::completePayPal. Successfully loaded from cache, using $cachedData[email]", []);
+        $input['email'] = $cachedData['email'];
+      }
+      else {
+        // OLD:
+        Civi::log()->warning("Oddc::completePayPal. Did not find match on invoiceID and contributionID, falling back to session method.");
+        // We require that the contribution ID matches one on session.
+        if (empty($input['contributionID']) || empty($_SESSION['oddc_paypal_contribs'][$input['contributionID']])) {
+          Civi::log()->error("Oddc::completePayPal. Input contributionID not found on session. Will not send email.", []);
+          return;
+        }
 
-    // Load the email from the session data.
-    $input['email'] = $_SESSION['oddc_paypal_contribs'][$input['contributionID']]['email'] ?? '';
+        // Load the email from the session data.
+        $input['email'] = $_SESSION['oddc_paypal_contribs'][$input['contributionID']]['email'] ?? '';
+      }
+    }
 
     $this->sendThankYouEmail($input);
 
@@ -997,7 +1034,7 @@ class CRM_Oddc {
 
     $_SESSION['oddc_analytics_data'] = [
       'id' => $input['contributionID'] ,
-      'currency' => $contribution['currency'],
+      'currency' => $contribution['currency'] ?? 'GBP',
       'amount' => $contribution['total_amount'],
     ];
 
