@@ -778,14 +778,10 @@ class CRM_Oddc {
    */
   public function sendCompletedPaymentSetUp(string $paymentService, array $input) {
     $glue = Civi\Klaviyo\Glue::singleton();
-    $customerProperties = [
-      '$email'      => $glue->ensureKlaviyoContactRecord($input['contactID']),
-    ];
-    $eventProperties = [
-      'paymentInstrument' => $paymentService,
-      'kind'              => $this->input['is_recur'] ? 'Recurring' : 'One-Off',
-    ];
-    $glue->api->track($customerProperties, 'Completed Payment Set-up', $eventProperties);
+    $customerProperties = [ '$email'      => $glue->ensureKlaviyoContactRecord($input['contactID']) ];
+    $eventProperties = [ 'paymentInstrument' => $paymentService ];
+    $metricName = ($this->input['is_recur']) ? 'Completed Recurring Payment Set-up' : 'Completed One-Off Payment Set-up';
+    $glue->api->track($customerProperties, $metricName, $eventProperties);
   }
 
   /**
@@ -952,15 +948,16 @@ class CRM_Oddc {
       'status_id'         => 'Scheduled',
     ];
     // Fetch description of their current giving.
+    $oldGivingDescription = CRM_Oddc::getCurrentRegularGivingDescription($input['contactID']);
     $activity_params['details'] =
       "<p>New giving: $contribution[total_amount] monthly.</p>"
       . "<p>All giving: "
-      . htmlspecialchars(CRM_Oddc::getCurrentRegularGivingDescription($input['contactID']))
+      . htmlspecialchars($oldGivingDescription)
       . '</p>'
       . "<p><strong>Note: all previous regular giving arrangements need to be cancelled, leaving only this latest one in place</strong></p>";
 
     // Create the activity
-    civicrm_api3('Activity', 'create', $activity_params);
+    $activityID = civicrm_api3('Activity', 'create', $activity_params)['id'];
 
     $params = [
       'contact_id'          => $input['contactID'],
@@ -968,6 +965,19 @@ class CRM_Oddc {
       'od_message'          => $activity_params['details'],
     ];
     CRM_Oddc::sendStaffNotificationEmail($params);
+
+    // Create Klaviyo event
+    // @see also CRM_Oddc_Page_UpdateGiving::notify
+    $glue = Civi\Klaviyo\Glue::singleton();
+    $customerProperties = ['$email' => $glue->ensureKlaviyoContactRecord($input['contactID'])];
+    $eventProperties = [
+      '$event_id'       => 'civicrm_activity_' . $activityID,
+      'monthlyValueNew' => $contribution['total_amount'],
+      'previousGiving'  => $oldGivingDescription,
+      'subject'         => $activity_params['subject'],
+      // 'monthlyValueOld' => can't because it might be not monthly
+    ];
+    $glue->api->track($customerProperties, 'Update Recurring Contribution', $eventProperties);
   }
   /**
    * Extract amount for Google Analytics.
@@ -1262,6 +1272,12 @@ class CRM_Oddc {
     }
     if ($needsSaving) {
       $dao->save();
+    }
+
+    if ($consentLocation) {
+      // xxx
+      $consentDetails .= "<div class='location'>" . htmlspecialchars($consentLocation) . "</div>";
+      $consentLocation = mb_substr($consentLocation, 0, 255);
     }
 
     civicrm_api3('Activity', 'create', [

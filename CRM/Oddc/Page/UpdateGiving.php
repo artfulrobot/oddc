@@ -252,7 +252,7 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
     }
 
     // Would have preferred to use API but copied most of this code from CRM/Contribute/Form/UpdateSubscription.php
-    CRM_Activity_BAO_Activity::create($activityParams);
+    $activityID = CRM_Activity_BAO_Activity::create($activityParams)['id'];
 
     $params = [
       'contact_id'          => $data['contact_id'],
@@ -261,5 +261,16 @@ class CRM_Oddc_Page_UpdateGiving extends CRM_Core_Page {
     ];
     CRM_Oddc::sendStaffNotificationEmail($params);
 
+    // Send Klaviyo metric.
+    // @see also Oddc::upgradesActions()
+    $glue = Civi\Klaviyo\Glue::singleton();
+    $customerProperties = ['$email' => $glue->ensureKlaviyoContactRecord($data['contact_id'])];
+    $eventProperties = [
+      '$event_id'       => 'civicrm_activity_' . $activityID,
+      'monthlyValueNew' => $data['amount_new'],
+      'monthlyValueOld' => $data['amount_old'],
+      'subject'         => $activityParams['subject'],
+    ];
+    $glue->api->track($customerProperties, 'Update Recurring Contribution', $eventProperties);
   }
 }
