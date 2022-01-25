@@ -1284,19 +1284,26 @@ class CRM_Oddc {
    * - Adds them to the general group.
    * - Clears their do not email and bulk opt-out flags.
    * - This is wired up to Klaviyo.
+   *
+   * @param int $contactID
+   * @param int|int[] $groupID groupID or IDs
+   * @param string $consentSubject
+   * @param string $consentDetails
+   * @param string $consentLocation
+   * @param string $when datetime defaults to now.
    */
   public static function drySignup(
     int $contactID,
-    ?int $groupID,
+    $groupIDs,
     string $consentSubject, string $consentDetails, string $consentLocation, ?string $when=NULL
   ) {
 
-    // Look them up and clear is_opt_out and do_not_email
+    // Look them up and clear is_opt_out and do_not_email {{{
     $dao = new CRM_Contact_BAO_Contact();
     $dao->id = $contactID;
     if (!$dao->find(1)) {
       // This should not happen, coding error if it does.
-      throw new \RuntimeException("Could not find contact $contactID, passed into drySignup for group $groupID");
+      throw new \RuntimeException("Could not find contact $contactID, passed into drySignup for group(s) " . json_encode($groupIDs));
     }
     $needsSaving = FALSE;
     if ($dao->is_opt_out) {
@@ -1310,12 +1317,32 @@ class CRM_Oddc {
     if ($needsSaving) {
       $dao->save();
     }
+    // }}}
 
     if ($consentLocation) {
-      // xxx
-      $consentDetails .= "<div class='location'>" . htmlspecialchars($consentLocation) . "</div>";
+      // Store full location in details in case it's very long.
+      $consentDetails .= "<p class='location'>" . htmlspecialchars($consentLocation) . "</p>";
+      // Store up to 255 chars in location.
       $consentLocation = mb_substr($consentLocation, 0, 255);
     }
+
+    Civi::log()->debug("drySignup: contact $contactID, group(s) " . json_encode($groupIDs));
+    if (!is_array($groupIDs)) {
+      if ($groupIDs) {
+        // We've been passed in a single group ID.
+        $groupIDs = [(int) $groupIDs];
+      }
+      else {
+        // Nb. includes null|0|''
+        $groupIDs = [];
+      }
+    }
+    if (!in_array(oD_GENERAL_EMAIL_GROUP_ID, $groupIDs)) {
+      // Always add them to the general group, too.
+      $groupIDs[] = oD_GENERAL_EMAIL_GROUP_ID;
+    }
+    Civi::log()->debug("drySignup: contact $contactID, group(s) " . json_encode($groupIDs));
+    $consentDetails .= "<p>Added to groups: <span class='group-ids'>" . implode(', ', $groupIDs) . '</p>';
 
     civicrm_api3('Activity', 'create', [
       'source_contact_id'  => $contactID,
@@ -1328,15 +1355,11 @@ class CRM_Oddc {
       'activity_date_time' => $when ? $when : date('Y-m-d H:i:s'),
     ]);
 
-    // Add the contact to the CiviCRM group, if one specified.
+    // Add the contact to the CiviCRM group(s)
     $contactIDs = [$contactID];
-    if ($groupID) {
+    foreach ($groupIDs as $groupID) {
       CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, $groupID);
     }
-
-    // Always add them to the general group, too.
-    CRM_Contact_BAO_GroupContact::addContactsToGroup($contactIDs, oD_GENERAL_EMAIL_GROUP_ID);
-
 
     // Now pass data to Klaviyo
 
@@ -1345,9 +1368,9 @@ class CRM_Oddc {
     $email = $glue->ensureKlaviyoContactRecord($contactID);
     $lists = $glue->getGroupsToPushToLists();
 
-    try {
-      // Add them to the group list, if it exists.
-      if ($groupID) {
+    foreach ($groupIDs as $groupID) {
+      try {
+        // Add them to the group list, if it exists.
         $listID = $lists[$groupID]['listID'] ?? NULL;
         if ($listID) {
           Civi::log()->info(__FUNCTION__ . " Adding email '$email' in group $groupID to list '$listID'");
@@ -1357,21 +1380,9 @@ class CRM_Oddc {
           Civi::log()->info(__FUNCTION__ . " failed to find list for group $groupID");
         }
       }
-
-      // Add them to the general list
-      $groupID = oD_GENERAL_EMAIL_GROUP_ID;
-      $listID = $lists[$groupID]['listID'] ?? NULL;
-      if ($listID) {
-        Civi::log()->info(__FUNCTION__ . " Adding email '$email' in group $groupID to list '$listID'");
-        $glue->api->listAdd($listID, [['email' => $email]]);
+      catch (\Exception $e) {
+        Civi::log()->error(__FUNCTION__ . " failed to add to Klaviyo: " . $e->getMessage(), ['exception' => $e]);
       }
-      else {
-        Civi::log()->info(__FUNCTION__ . " failed to find list for group $groupID");
-      }
-    }
-    catch (\Exception $e) {
-      Civi::log()->error(__FUNCTION__ . " failed to add to Klaviyo: " . $e->getMessage(), ['exception' => $e]);
     }
   }
-
 }
